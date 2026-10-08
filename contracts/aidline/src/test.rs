@@ -582,3 +582,34 @@ fn due_date_refunds_do_not_cancel_campaign() {
     assert_eq!(c2.raised, 0);
     assert_eq!(c2.released, 0);
 }
+
+// ─── Issue #2 Tests: AdminChanged event ──────────────────────────────────────
+
+#[test]
+fn set_admin_emits_admin_changed_event() {
+    let s = Setup::new();
+    let new_admin = Address::generate(&s.env);
+
+    // set_admin emits AdminChanged. env.events().all() returns events from the
+    // most recent contract invocation; after set_admin it must be non-empty.
+    s.client.set_admin(&new_admin);
+    assert!(
+        !s.env.events().all().events().is_empty(),
+        "AdminChanged event not emitted"
+    );
+
+    // The contract's admin should now be new_admin.
+    assert_eq!(s.client.admin(), new_admin);
+}
+
+#[test]
+fn set_admin_updates_stored_admin() {
+    let s = Setup::new();
+    let new_admin = Address::generate(&s.env);
+
+    let old_admin = s.client.admin();
+    s.client.set_admin(&new_admin);
+
+    assert_ne!(s.client.admin(), old_admin);
+    assert_eq!(s.client.admin(), new_admin);
+}
