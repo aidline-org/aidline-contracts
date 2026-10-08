@@ -30,3 +30,29 @@ jobs:
           stellar --version
       - name: Build WASM
         run: stellar contract build
+
+  fuzz:
+    # Run a short bounded fuzz session in CI (Issue #28).
+    # The job uses a nightly toolchain and cargo-fuzz.
+    # It runs for a maximum of 30 seconds — enough to catch obvious regressions
+    # without slowing the pipeline significantly.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Use a separate cache key so nightly artifacts don't mix with stable.
+          key: fuzz-nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Run fuzz target (30 s)
+        working-directory: fuzz
+        # -max_total_time limits the wall-clock run; -max_len=4096 keeps
+        # inputs small so the fuzzer exercises more paths per second.
+        run: |
+          cargo fuzz run fuzz_contract -- \
+            -max_total_time=30 \
+            -max_len=4096

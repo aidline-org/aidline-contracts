@@ -374,6 +374,8 @@ fn emergency_fast_track_authorization() {
     let id = s.campaign();
     let stranger = s.donor(1000);
 
+    // Call from a stranger instead of verifier will fail on require_auth, but since we mock all auths here, we need to test verifier role
+    // We can remove verifier role to test
     s.client.remove_verifier(&s.verifier);
     assert_eq!(
         s.client.try_emergency_fast_track(&id),
@@ -423,6 +425,10 @@ fn test_measure_resource_costs() {
     let env = &s.env;
     let donor = s.donor(5000);
     
+    // We want to measure the cost of each entry point. 
+    // We reset the budget before each call and print/record the usage after.
+    
+    // 1. create_campaign
     env.budget().reset_default();
     let id = s.client.create_campaign(
         &s.creator,
@@ -433,6 +439,31 @@ fn test_measure_resource_costs() {
         &(env.ledger().timestamp() + 30 * DAY),
         &vec![env, 1000, 1000],
     );
+    // env.budget().print() or get costs here.
+    
+    // 2. donate
+    env.budget().reset_default();
+    s.client.donate(&donor, &id, &500);
+    
+    // 3. emergency_fast_track
+    env.budget().reset_default();
+    s.client.emergency_fast_track(&id);
+    
+    // 4. approve_milestone
+    env.budget().reset_default();
+    s.client.approve_milestone(&id, &s.proof());
+    
+    // 5. cancel_campaign
+    env.budget().reset_default();
+    s.client.cancel_campaign(&s.creator, &id);
+    
+    // 6. refund
+    env.budget().reset_default();
+    s.client.refund(&donor, &id);
+    
+    // Maintainers: to regenerate the resource-cost table, run this test with
+    // `cargo test test_measure_resource_costs -- --nocapture` and insert
+    // the output costs into `docs/ARCHITECTURE.md`.
     
     env.budget().reset_default();
     s.client.donate(&donor, &id, &500);
@@ -462,6 +493,12 @@ fn test_exact_events_emitted() {
     let uri = String::from_str(env, "ipfs://events-test");
     let milestones = vec![env, 300, 700];
 
+    // 1. VerifierUpdated
+    // Emitted during Setup::new() when `client.add_verifier` was called.
+    // However, let's trigger it directly.
+    s.client.add_verifier(&donor);
+    let events = env.events().all();
+    // Assuming it's the last event
     s.client.add_verifier(&donor);
     let events = env.events().all();
     let verifier_updated_event = events.last().unwrap();
@@ -478,6 +515,10 @@ fn test_exact_events_emitted() {
         )
     );
 
+    // Clear events
+    env.events().all().clear();
+
+    // 2. CampaignCreated
     env.events().all().clear();
 
     let id = s.client.create_campaign(
@@ -504,6 +545,7 @@ fn test_exact_events_emitted() {
         )
     );
 
+    // 3. Donated
     s.client.donate(&donor, &id, &500);
     let events = env.events().all();
     let donated_event = events.last().unwrap();
@@ -521,6 +563,7 @@ fn test_exact_events_emitted() {
         )
     );
 
+    // 4. EmergencyAdvanceReleased
     s.client.emergency_fast_track(&id);
     let events = env.events().all();
     let emergency_event = events.last().unwrap();
@@ -538,6 +581,7 @@ fn test_exact_events_emitted() {
         )
     );
 
+    // 5. MilestoneReleased
     s.client.approve_milestone(&id, &s.proof());
     let events = env.events().all();
     let milestone_event = events.last().unwrap();
@@ -554,6 +598,7 @@ fn test_exact_events_emitted() {
         )
     );
 
+    // 6. CampaignCancelled
     s.client.cancel_campaign(&s.creator, &id);
     let events = env.events().all();
     let cancelled_event = events.last().unwrap();
@@ -570,6 +615,7 @@ fn test_exact_events_emitted() {
         )
     );
 
+    // 7. Refunded
     s.client.refund(&donor, &id);
     let events = env.events().all();
     let refunded_event = events.last().unwrap();
@@ -618,6 +664,20 @@ fn due_date_refunds_do_not_cancel_campaign() {
     
     s.client.approve_milestone(&id, &s.proof()); // 300 released
     
+    // Advance past first milestone (which is already released) and into second milestone
+    env.ledger().set_timestamp(now + 21 * DAY);
+    
+    // Milestone 1 is now overdue!
+    let refund_a = s.client.refund(&donor_a, &id);
+    assert_eq!(refund_a, 350); // 500 * 700 / 1000
+    
+    let c = s.client.get_campaign(&id);
+    assert_eq!(c.status, CampaignStatus::Active); // still active!
+    assert_eq!(c.raised, 500); // 1000 - 500
+    assert_eq!(c.released, 150); // 300 - 150
+    
+    let refund_b = s.client.refund(&donor_b, &id);
+    assert_eq!(refund_b, 350); // 500 * (500 - 150) / 500 = 350
     env.ledger().set_timestamp(now + 21 * DAY);
     
     let refund_a = s.client.refund(&donor_a, &id);
