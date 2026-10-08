@@ -1,11 +1,8 @@
-use soroban_sdk::{Address, String, contractevent};
+use soroban_sdk::{Address, Env, String, symbol_short};
 
 use crate::types::CampaignKind;
 
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CampaignCreated {
-    #[topic]
     pub campaign_id: u64,
     pub creator: Address,
     pub kind: CampaignKind,
@@ -13,173 +10,260 @@ pub struct CampaignCreated {
     pub deadline: u64,
 }
 
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl CampaignCreated {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("created"), self.campaign_id),
+            (
+                self.creator.clone(),
+                self.kind,
+                self.goal,
+                self.deadline,
+            ),
+        );
+    }
+}
+
 pub struct Donated {
-    #[topic]
     pub campaign_id: u64,
-    #[topic]
     pub donor: Address,
     pub amount: i128,
 }
 
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl Donated {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("donated"), self.campaign_id, self.donor.clone()),
+            self.amount,
+        );
+    }
+}
+
 pub struct MilestoneReleased {
-    #[topic]
     pub campaign_id: u64,
     pub index: u32,
     pub amount: i128,
     pub proof_uri: String,
 }
 
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl MilestoneReleased {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("released"), self.campaign_id, self.index),
+            (self.amount, self.proof_uri.clone()),
+        );
+    }
+}
+
 pub struct CampaignCancelled {
-    #[topic]
     pub campaign_id: u64,
 }
 
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl CampaignCancelled {
+    pub fn publish(&self, env: &Env) {
+        env.events()
+            .publish((symbol_short!("canceled"), self.campaign_id), ());
+    }
+}
+
 pub struct Refunded {
-    #[topic]
     pub campaign_id: u64,
-    #[topic]
     pub donor: Address,
     pub amount: i128,
 }
 
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl Refunded {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("refunded"), self.campaign_id, self.donor.clone()),
+            self.amount,
+        );
+    }
+}
+
 pub struct VerifierUpdated {
-    #[topic]
     pub verifier: Address,
     pub active: bool,
 }
 
-// ─── Issue #27: Sponsor matching events ───────────────────────────────────────
+impl VerifierUpdated {
+    pub fn publish(&self, env: &Env) {
+        env.events()
+            .publish((symbol_short!("verifier"), self.verifier.clone()), self.active);
+    }
+}
 
-/// Emitted when a sponsor creates or tops up a matching pool.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+// ─── Issue #27: Sponsor matching pools ────────────────────────────────────────
+
 pub struct SponsorPoolDeposited {
-    #[topic]
     pub campaign_id: u64,
-    #[topic]
     pub sponsor: Address,
     pub amount: i128,
     pub ratio_bps: u32,
     pub cap: i128,
 }
 
-/// Emitted each time matching funds are applied to a donation.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl SponsorPoolDeposited {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("sp_depos"), self.campaign_id, self.sponsor.clone()),
+            (self.amount, self.ratio_bps, self.cap),
+        );
+    }
+}
+
 pub struct MatchingApplied {
-    #[topic]
     pub campaign_id: u64,
-    #[topic]
     pub sponsor: Address,
     pub donor: Address,
     pub donation_amount: i128,
     pub matched_amount: i128,
 }
 
-/// Emitted when a sponsor retrieves their unused matching pool.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl MatchingApplied {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("sp_match"), self.campaign_id, self.sponsor.clone()),
+            (self.donor.clone(), self.donation_amount, self.matched_amount),
+        );
+    }
+}
+
 pub struct SponsorPoolReturned {
-    #[topic]
     pub campaign_id: u64,
-    #[topic]
     pub sponsor: Address,
     pub amount: i128,
 }
 
-// ─── Issue #29: Verifier bond events ─────────────────────────────────────────
+impl SponsorPoolReturned {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("sp_ret"), self.campaign_id, self.sponsor.clone()),
+            self.amount,
+        );
+    }
+}
 
-/// Emitted when a verifier posts a bond during registration.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+// ─── Issue #29: Verifier bonds ────────────────────────────────────────────────
+
 pub struct VerifierBondPosted {
-    #[topic]
     pub verifier: Address,
     pub amount: i128,
 }
 
-/// Emitted when a verifier deregisters and starts the withdrawal delay.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl VerifierBondPosted {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("vb_post"), self.verifier.clone()),
+            self.amount,
+        );
+    }
+}
+
 pub struct VerifierDeregistered {
-    #[topic]
     pub verifier: Address,
     pub deregistered_at: u64,
 }
 
-/// Emitted when a verifier withdraws their bond after the delay.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl VerifierDeregistered {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("vb_dereg"), self.verifier.clone()),
+            self.deregistered_at,
+        );
+    }
+}
+
 pub struct BondWithdrawn {
-    #[topic]
     pub verifier: Address,
     pub amount: i128,
 }
 
-/// Emitted when the admin slashes a verifier bond.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl BondWithdrawn {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("vb_withd"), self.verifier.clone()),
+            self.amount,
+        );
+    }
+}
+
 pub struct BondSlashed {
-    #[topic]
     pub verifier: Address,
     pub campaign_id: u64,
     pub slashed_amount: i128,
 }
 
-// ─── Issue #30: Pledge events ─────────────────────────────────────────────────
+impl BondSlashed {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("vb_slash"), self.verifier.clone(), self.campaign_id),
+            self.slashed_amount,
+        );
+    }
+}
 
-/// Emitted when a donor creates a new pledge.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+// ─── Issue #30: Pledges ───────────────────────────────────────────────────────
+
 pub struct PledgeCreated {
-    #[topic]
     pub pledge_id: u64,
-    #[topic]
     pub campaign_id: u64,
     pub donor: Address,
     pub pledged_amount: i128,
 }
 
-/// Emitted when pledge funds are successfully pulled during milestone approval.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl PledgeCreated {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("pl_creat"), self.campaign_id, self.donor.clone()),
+            (self.pledge_id, self.pledged_amount),
+        );
+    }
+}
+
 pub struct PledgePulled {
-    #[topic]
     pub pledge_id: u64,
-    #[topic]
     pub campaign_id: u64,
     pub donor: Address,
     pub pulled_amount: i128,
 }
 
-/// Emitted when a pledge is skipped because the allowance is unavailable.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl PledgePulled {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("pl_pull"), self.campaign_id, self.donor.clone()),
+            (self.pledge_id, self.pulled_amount),
+        );
+    }
+}
+
 pub struct PledgeSkipped {
-    #[topic]
     pub pledge_id: u64,
-    #[topic]
     pub campaign_id: u64,
     pub donor: Address,
     pub reason: u32,
 }
 
-/// Emitted when milestone approval settles pledges and records total collected.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl PledgeSkipped {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("pl_skip"), self.campaign_id, self.donor.clone()),
+            (self.pledge_id, self.reason),
+        );
+    }
+}
+
 pub struct PledgeSettlement {
-    #[topic]
     pub campaign_id: u64,
     pub milestone_index: u32,
     pub total_pledged_pulled: i128,
+}
+
+impl PledgeSettlement {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("pl_settl"), self.campaign_id, self.milestone_index),
+            self.total_pledged_pulled,
+        );
+    }
 }

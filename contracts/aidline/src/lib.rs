@@ -18,17 +18,24 @@ mod test;
 use soroban_sdk::{Address, Env, String, Vec, contract, contractimpl, token};
 
 pub use errors::Error;
-pub use types::{BondStatus, Campaign, CampaignKind, CampaignStatus, SponsorPool, VerifierBond};
+pub use types::{
+    BondStatus, Campaign, CampaignKind, CampaignStatus, Pledge, SponsorPool, VerifierBond,
+};
 
 use events::{
     BondSlashed, BondWithdrawn, CampaignCancelled, CampaignCreated, Donated, MatchingApplied,
-    MilestoneReleased, Refunded, SponsorPoolDeposited, SponsorPoolReturned, VerifierBondPosted,
-    VerifierDeregistered, VerifierUpdated,
+    MilestoneReleased, PledgeCreated, PledgePulled, PledgeSettlement, PledgeSkipped, Refunded,
+    SponsorPoolDeposited, SponsorPoolReturned, VerifierBondPosted, VerifierDeregistered,
+    VerifierUpdated,
 };
 
 const MAX_MILESTONES: u32 = 20;
 /// Maximum matching ratio (100 % = 10 000 bps).
 const MAX_RATIO_BPS: u32 = 10_000;
+/// Reason code emitted in PledgeSkipped when the donor has no allowance.
+const SKIP_REASON_NO_ALLOWANCE: u32 = 1;
+/// Reason code emitted in PledgeSkipped when the pledge is fully consumed.
+const SKIP_REASON_EXHAUSTED: u32 = 2;
 
 #[contract]
 pub struct Aidline;
@@ -74,8 +81,6 @@ impl Aidline {
 
     // ─── Issue #29: Bond configuration (admin only) ───────────────────────────
 
-    /// Set the minimum bond amount a verifier must post when registering.
-    /// Set to 0 to disable the bond requirement (default).
     pub fn set_bond_requirement(env: Env, amount: i128) -> Result<(), Error> {
         storage::admin(&env).require_auth();
         if amount < 0 {
@@ -85,8 +90,6 @@ impl Aidline {
         Ok(())
     }
 
-    /// Set the delay (in seconds) after deregistration before a verifier can
-    /// withdraw their bond. Default is 0 (no delay).
     pub fn set_bond_withdraw_delay(env: Env, delay: u64) {
         storage::admin(&env).require_auth();
         storage::set_bond_withdraw_delay(&env, delay);
@@ -94,11 +97,6 @@ impl Aidline {
 
     // ─── Issue #29: Bonded verifier registration ──────────────────────────────
 
-    /// Register as a verifier by posting the required bond.
-    ///
-    /// `bond_amount` must be >= the configured `bond_requirement`. The tokens
-    /// are transferred from the verifier to the contract and held until the
-    /// verifier deregisters and the withdrawal delay expires.
     pub fn register_with_bond(
         env: Env,
         verifier: Address,
@@ -111,12 +109,10 @@ impl Aidline {
             return Err(Error::BondRequired);
         }
 
-        // Prevent double-registration
         if storage::is_verifier(&env, &verifier) {
             return Err(Error::Unauthorized);
         }
 
-        // Transfer bond from verifier to contract
         token::Client::new(&env, &storage::token(&env)).transfer(
             &verifier,
             &env.current_contract_address(),
@@ -142,13 +138,6 @@ impl Aidline {
         Ok(())
     }
 
-    /// Deregister as a verifier and start the withdrawal delay timer.
-    ///
-    /// The verifier remains in `PendingWithdrawal` state; their bond cannot be
-    /// withdrawn until `bond_withdraw_delay` seconds have elapsed.
-    /// The verifier's campaigns are frozen (as with `remove_verifier`).
-    ///
-    /// Can be called by the verifier themselves or by the admin.
     pub fn deregister_verifier(env: Env, caller: Address, verifier: Address) -> Result<(), Error> {
         caller.require_auth();
         let admin = storage::admin(&env);
@@ -156,17 +145,14 @@ impl Aidline {
             return Err(Error::Unauthorized);
         }
 
-        // Verifier must be currently active
         if !storage::is_verifier(&env, &verifier) {
             return Err(Error::NotVerifier);
         }
 
-        // Remove from active registry
         storage::set_verifier(&env, &verifier, false);
 
         let now = env.ledger().timestamp();
 
-        // Update bond record if one exists
         if let Some(mut bond) = storage::verifier_bond(&env, &verifier) {
             bond.status = BondStatus::PendingWithdrawal;
             bond.deregistered_at = now;
@@ -182,21 +168,15 @@ impl Aidline {
         Ok(())
     }
 
-    /// Withdraw the verifier's bond after the withdrawal delay has passed.
-    ///
-    /// Only the verifier themselves can withdraw their own bond.
-    /// A slashed bond cannot be withdrawn beyond the remaining amount.
     pub fn withdraw_bond(env: Env, verifier: Address) -> Result<i128, Error> {
         verifier.require_auth();
 
         let mut bond = storage::verifier_bond(&env, &verifier).ok_or(Error::BondNotFound)?;
 
-        // Bond must be in PendingWithdrawal (not Active or Withdrawn or Slashed)
         if bond.status != BondStatus::PendingWithdrawal {
             return Err(Error::BondNotWithdrawable);
         }
 
-        // Enforce withdrawal delay
         let delay = storage::bond_withdraw_delay(&env);
         let elapsed = env.ledger().timestamp() - bond.deregistered_at;
         if elapsed < delay {
@@ -227,17 +207,6 @@ impl Aidline {
         Ok(withdrawable)
     }
 
-    /// Admin slashes a verifier's bond after a documented dispute.
-    ///
-    /// The slashed tokens are distributed back to the affected campaign's
-    /// donors by adding them to `campaign.raised` and crediting the contract
-    /// address as a contributor. This integrates with the existing pro-rata
-    /// refund formula: when donors call `refund`, the recovered funds are
-    /// returned proportionally to their original contributions.
-    ///
-    /// * `verifier` — the verifier whose bond is being slashed.
-    /// * `campaign_id` — the campaign affected by the fraud.
-    /// * `slash_amount` — tokens to slash. Must be <= bond.remaining.
     pub fn slash_verifier(
         env: Env,
         verifier: Address,
@@ -265,21 +234,10 @@ impl Aidline {
         }
         storage::save_verifier_bond(&env, &bond);
 
-        // Distribute slashed funds to the campaign's donors via the refund
-        // mechanism. We add the slashed amount to campaign.raised and record
-        // it as a contribution from the contract address so the refund formula
-        // distributes it pro-rata when donors call refund.
-        //
-        // Note: The campaign may be in any state (including completed or
-        // cancelled). If it is completed, the slashed funds are held by the
-        // contract until the admin manually arranges distribution (a known
-        // limitation). For cancelled or expired campaigns, donors can
-        // immediately call refund to receive their share.
         let campaign_result = storage::campaign(&env, campaign_id);
         if let Ok(mut campaign) = campaign_result {
             let contract_addr = env.current_contract_address();
             let prev = storage::contribution(&env, campaign_id, &contract_addr);
-            // Add to raised so the refund formula treats it as recoverable funds.
             campaign.raised = campaign
                 .raised
                 .checked_add(slash_amount)
@@ -292,8 +250,6 @@ impl Aidline {
                 prev + slash_amount,
             );
         }
-        // If the campaign is not found, the tokens remain in the contract.
-        // This is a known edge case; a future improvement should track them.
 
         BondSlashed {
             verifier: verifier.clone(),
@@ -419,7 +375,6 @@ impl Aidline {
 
     // ─── Issue #27: Sponsor matching ─────────────────────────────────────────
 
-    /// A sponsor deposits a matching pool for a campaign.
     pub fn deposit_sponsor_pool(
         env: Env,
         sponsor: Address,
@@ -476,7 +431,6 @@ impl Aidline {
         Ok(())
     }
 
-    /// Apply matching from a sponsor pool to a specific donation amount.
     pub fn apply_matching(
         env: Env,
         sponsor: Address,
@@ -538,7 +492,6 @@ impl Aidline {
         Ok(matched_amount)
     }
 
-    /// Returns the sponsor's unused pool balance after the campaign ends.
     pub fn return_sponsor_pool(
         env: Env,
         sponsor: Address,
@@ -579,7 +532,81 @@ impl Aidline {
         Ok(remaining)
     }
 
+    // ─── Issue #30: Pledges ───────────────────────────────────────────────────
+
+    /// A donor creates a pledge for a campaign.
+    ///
+    /// The donor must have granted the Aidline contract a token allowance of
+    /// at least `pledged_amount` before calling this. The pledge is recorded
+    /// persistently and funds are pulled proportionally when milestones are
+    /// approved.
+    ///
+    /// `pledged_amount` must be > 0. The campaign must be active.
+    ///
+    /// Pledges are supplementary to direct donations: the milestone funding
+    /// check (`raised - released >= milestone_amount`) uses only direct
+    /// donations and matched funds. Pledges are pulled on top of that to
+    /// pre-fill future milestones.
+    pub fn create_pledge(
+        env: Env,
+        donor: Address,
+        campaign_id: u64,
+        pledged_amount: i128,
+    ) -> Result<u64, Error> {
+        donor.require_auth();
+
+        if pledged_amount <= 0 {
+            return Err(Error::InvalidPledge);
+        }
+
+        let campaign = storage::campaign(&env, campaign_id)?;
+        Self::ensure_open(&env, &campaign)?;
+
+        // Verify the donor has granted sufficient allowance.
+        // We do not transfer tokens here — they are pulled at milestone approval.
+        let tok = token::Client::new(&env, &storage::token(&env));
+        let allowance = tok.allowance(&donor, &env.current_contract_address());
+        if allowance < pledged_amount {
+            return Err(Error::InvalidPledge);
+        }
+
+        let pledge_id = storage::next_pledge_id(&env);
+        let pledge = Pledge {
+            pledge_id,
+            donor: donor.clone(),
+            campaign_id,
+            pledged_amount,
+            pulled_amount: 0,
+            active: true,
+        };
+        storage::save_pledge(&env, &pledge);
+
+        PledgeCreated {
+            pledge_id,
+            campaign_id,
+            donor,
+            pledged_amount,
+        }
+        .publish(&env);
+
+        Ok(pledge_id)
+    }
+
     /// Called by the campaign's verifier once the next milestone is done.
+    ///
+    /// In addition to releasing the milestone from direct donations (the
+    /// original behavior), this function also pulls from active pledges
+    /// proportionally to cover the milestone amount. Pledge pulling is
+    /// best-effort: if a pledge's allowance has lapsed, the pledge is skipped
+    /// and a `PledgeSkipped` event is emitted.
+    ///
+    /// Pledge funds pulled are added to `campaign.raised` so they are included
+    /// in the milestone release. If the total pledged pull is insufficient to
+    /// cover the milestone (because allowances lapsed), the milestone approval
+    /// may still fail with `MilestoneNotFunded` unless direct donations cover
+    /// the shortfall.
+    ///
+    /// `proof_uri` points at the evidence and is emitted for indexers.
     pub fn approve_milestone(env: Env, campaign_id: u64, proof_uri: String) -> Result<i128, Error> {
         let mut campaign = storage::campaign(&env, campaign_id)?;
         campaign.verifier.require_auth();
@@ -589,21 +616,39 @@ impl Aidline {
         Self::ensure_open(&env, &campaign)?;
 
         let index = campaign.milestones_released;
-        let amount = campaign
+        let milestone_amount = campaign
             .milestones
             .get(index)
             .ok_or(Error::NoMilestonesLeft)?;
-        if campaign.raised - campaign.released < amount {
+
+        // ── Issue #30: Pull from pledges before checking funding ─────────────
+        // We iterate over pledges by pledge_id from 0 to the current count.
+        // Pledges not belonging to this campaign are skipped.
+        // This approach avoids the need for a campaign→pledges index.
+        let pledge_count = storage::next_pledge_id_peek(&env);
+        let total_pledged_pulled =
+            Self::pull_pledges(&env, campaign_id, milestone_amount, pledge_count, &mut campaign);
+
+        // Emit settlement event
+        PledgeSettlement {
+            campaign_id,
+            milestone_index: index,
+            total_pledged_pulled,
+        }
+        .publish(&env);
+
+        // ── Original milestone release logic ─────────────────────────────────
+        if campaign.raised - campaign.released < milestone_amount {
             return Err(Error::MilestoneNotFunded);
         }
 
         token::Client::new(&env, &storage::token(&env)).transfer(
             &env.current_contract_address(),
             &campaign.beneficiary,
-            &amount,
+            &milestone_amount,
         );
 
-        campaign.released += amount;
+        campaign.released += milestone_amount;
         campaign.milestones_released += 1;
         if campaign.milestones_released == campaign.milestones.len() {
             campaign.status = CampaignStatus::Completed;
@@ -613,11 +658,11 @@ impl Aidline {
         MilestoneReleased {
             campaign_id,
             index,
-            amount,
+            amount: milestone_amount,
             proof_uri,
         }
         .publish(&env);
-        Ok(amount)
+        Ok(milestone_amount)
     }
 
     /// Stops a campaign early so donors can reclaim unreleased funds.
@@ -708,6 +753,10 @@ impl Aidline {
         storage::sponsor_pool(&env, campaign_id, &sponsor)
     }
 
+    pub fn get_pledge(env: Env, pledge_id: u64) -> Option<Pledge> {
+        storage::pledge(&env, pledge_id)
+    }
+
     // ─── Internal ─────────────────────────────────────────────────────────────
 
     fn ensure_open(env: &Env, campaign: &Campaign) -> Result<(), Error> {
@@ -718,5 +767,136 @@ impl Aidline {
             return Err(Error::CampaignExpired);
         }
         Ok(())
+    }
+
+    /// Pull pledge funds proportionally toward `milestone_amount`.
+    ///
+    /// Returns the total amount actually pulled from pledges.
+    ///
+    /// Algorithm:
+    /// 1. Collect all active pledges for the campaign.
+    /// 2. Compute total remaining pledge capacity.
+    /// 3. For each pledge compute its proportional share of `milestone_amount`.
+    /// 4. Clamp to: min(share, pledge.remaining, allowance).
+    /// 5. If pull > 0, transfer and record contribution.
+    /// 6. If allowance == 0 or pull == 0, emit PledgeSkipped.
+    ///
+    /// Rounding: each share is `milestone_amount * pledge.remaining / total_remaining`,
+    /// using integer division truncated toward zero. Any unallocated remainder
+    /// stays in the milestone's direct-donation funding.
+    fn pull_pledges(
+        env: &Env,
+        campaign_id: u64,
+        milestone_amount: i128,
+        pledge_count: u64,
+        campaign: &mut Campaign,
+    ) -> i128 {
+        let tok = token::Client::new(env, &storage::token(env));
+        let contract_addr = env.current_contract_address();
+
+        // Phase 1: gather active pledges for this campaign
+        // We scan all pledge IDs. In production the pledge count is bounded by
+        // the number of create_pledge calls across all campaigns; for a mature
+        // system an off-chain index (or a per-campaign pledge list stored
+        // separately) would be more efficient. This MVP scans linearly.
+        let mut active_pledges: Vec<Pledge> = Vec::new(env);
+        let mut total_remaining: i128 = 0;
+        let mut i: u64 = 0;
+        while i < pledge_count {
+            if let Some(p) = storage::pledge(env, i) {
+                if p.campaign_id == campaign_id && p.active && p.pulled_amount < p.pledged_amount {
+                    total_remaining += p.pledged_amount - p.pulled_amount;
+                    active_pledges.push_back(p);
+                }
+            }
+            i += 1;
+        }
+
+        if total_remaining == 0 || active_pledges.is_empty() {
+            return 0;
+        }
+
+        // Phase 2: pull proportionally
+        let mut total_pulled: i128 = 0;
+
+        for mut pledge in active_pledges.iter() {
+            let pledge_remaining = pledge.pledged_amount - pledge.pulled_amount;
+
+            // Proportional share: milestone_amount * pledge_remaining / total_remaining
+            let share = milestone_amount
+                .checked_mul(pledge_remaining)
+                .unwrap_or(i128::MAX)
+                / total_remaining;
+
+            if share <= 0 {
+                PledgeSkipped {
+                    pledge_id: pledge.pledge_id,
+                    campaign_id,
+                    donor: pledge.donor.clone(),
+                    reason: SKIP_REASON_EXHAUSTED,
+                }
+                .publish(env);
+                continue;
+            }
+
+            // Check allowance
+            let allowance = tok.allowance(&pledge.donor, &contract_addr);
+            if allowance <= 0 {
+                PledgeSkipped {
+                    pledge_id: pledge.pledge_id,
+                    campaign_id,
+                    donor: pledge.donor.clone(),
+                    reason: SKIP_REASON_NO_ALLOWANCE,
+                }
+                .publish(env);
+                continue;
+            }
+
+            // Clamp to what is actually available
+            let pull = share.min(pledge_remaining).min(allowance);
+            if pull <= 0 {
+                PledgeSkipped {
+                    pledge_id: pledge.pledge_id,
+                    campaign_id,
+                    donor: pledge.donor.clone(),
+                    reason: SKIP_REASON_NO_ALLOWANCE,
+                }
+                .publish(env);
+                continue;
+            }
+
+            // Transfer tokens from donor to contract
+            tok.transfer_from(
+                &contract_addr,
+                &pledge.donor,
+                &contract_addr,
+                &pull,
+            );
+
+            // Update pledge record
+            pledge.pulled_amount += pull;
+            if pledge.pulled_amount >= pledge.pledged_amount {
+                pledge.active = false;
+            }
+            storage::save_pledge(env, &pledge);
+
+            // Record as contribution so donor shares in refunds
+            let prev = storage::contribution(env, campaign_id, &pledge.donor);
+            storage::set_contribution(env, campaign_id, &pledge.donor, prev + pull);
+
+            // Increase campaign.raised
+            campaign.raised = campaign.raised.checked_add(pull).unwrap_or(campaign.raised);
+            total_pulled += pull;
+
+            PledgePulled {
+                pledge_id: pledge.pledge_id,
+                campaign_id,
+                donor: pledge.donor.clone(),
+                pulled_amount: pull,
+            }
+            .publish(env);
+        }
+
+        total_pulled
     }
 }
