@@ -294,3 +294,344 @@ fn missing_campaign_errors() {
         Err(Ok(Error::CampaignNotFound))
     );
 }
+
+// ─── Issue #23 Tests: Emergency fast track ────────────────────────────────────
+
+#[test]
+fn emergency_fast_track_works_for_emergency_campaign() {
+    let s = Setup::new();
+    let id = s.campaign(); // Goal 1000
+    let donor = s.donor(500);
+    
+    // Donate 300. Cap is 20% of 1000 = 200.
+    s.client.donate(&donor, &id, &300);
+
+    assert_eq!(s.client.emergency_fast_track(&id), 200);
+    assert_eq!(s.token.balance(&s.beneficiary), 200);
+
+    let c = s.client.get_campaign(&id);
+    assert_eq!(c.emergency_advance, 200);
+    assert_eq!(c.released, 200);
+}
+
+#[test]
+fn emergency_fast_track_limited_by_escrow() {
+    let s = Setup::new();
+    let id = s.campaign(); // Goal 1000
+    let donor = s.donor(500);
+    
+    // Donate 100. Cap is 200, but only 100 escrowed.
+    s.client.donate(&donor, &id, &100);
+
+    assert_eq!(s.client.emergency_fast_track(&id), 100);
+    assert_eq!(s.token.balance(&s.beneficiary), 100);
+}
+
+#[test]
+fn emergency_fast_track_cannot_exceed_cap() {
+    let s = Setup::new();
+    let id = s.campaign(); // Goal 1000
+    let donor = s.donor(1000);
+    
+    // Donate 1000. Cap is 200.
+    s.client.donate(&donor, &id, &1000);
+
+    assert_eq!(s.client.emergency_fast_track(&id), 200);
+    
+    // Try again -> already taken
+    assert_eq!(
+        s.client.try_emergency_fast_track(&id),
+        Err(Ok(Error::AdvanceAlreadyTaken))
+    );
+}
+
+#[test]
+fn emergency_fast_track_fails_for_non_emergency() {
+    let s = Setup::new();
+    let donor = s.donor(1000);
+
+    let id = s.client.create_campaign(
+        &s.creator,
+        &s.beneficiary,
+        &s.verifier,
+        &CampaignKind::Climate,
+        &String::from_str(&s.env, "ipfs://trees"),
+        &(s.env.ledger().timestamp() + 30 * DAY),
+        &vec![&s.env, 1000],
+    );
+
+    s.client.donate(&donor, &id, &1000);
+
+    assert_eq!(
+        s.client.try_emergency_fast_track(&id),
+        Err(Ok(Error::NotEmergencyCampaign))
+    );
+}
+
+#[test]
+fn emergency_fast_track_authorization() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let stranger = s.donor(1000);
+
+    s.client.remove_verifier(&s.verifier);
+    assert_eq!(
+        s.client.try_emergency_fast_track(&id),
+        Err(Ok(Error::NotVerifier))
+    );
+}
+
+#[test]
+fn emergency_fast_track_accounting_with_milestone_one() {
+    let s = Setup::new();
+    let id = s.campaign(); // milestones: 300, 300, 400
+    let donor = s.donor(1000);
+    
+    s.client.donate(&donor, &id, &1000);
+
+    // Fast track takes 200
+    s.client.emergency_fast_track(&id);
+    assert_eq!(s.token.balance(&s.beneficiary), 200);
+
+    // Approving milestone one (scheduled 300) should only release remaining 100
+    let amt = s.client.approve_milestone(&id, &s.proof());
+    assert_eq!(amt, 300); // returns scheduled amount
+    assert_eq!(s.token.balance(&s.beneficiary), 300); // 200 + 100
+    
+    let c = s.client.get_campaign(&id);
+    assert_eq!(c.released, 300); // total released so far
+    assert_eq!(c.emergency_advance, 200);
+    assert_eq!(c.milestones_released, 1);
+}
+
+#[test]
+fn emergency_fast_track_requires_escrow() {
+    let s = Setup::new();
+    let id = s.campaign();
+    
+    assert_eq!(
+        s.client.try_emergency_fast_track(&id),
+        Err(Ok(Error::AdvanceExceedsEscrow))
+    );
+}
+
+// ─── Issue #24 Tests: Resource Cost Measurements ──────────────────────────────
+
+#[test]
+fn test_measure_resource_costs() {
+    let s = Setup::new();
+    let env = &s.env;
+    let donor = s.donor(5000);
+    
+    env.budget().reset_default();
+    let id = s.client.create_campaign(
+        &s.creator,
+        &s.beneficiary,
+        &s.verifier,
+        &CampaignKind::Emergency,
+        &String::from_str(env, "ipfs://cost-test"),
+        &(env.ledger().timestamp() + 30 * DAY),
+        &vec![env, 1000, 1000],
+    );
+    
+    env.budget().reset_default();
+    s.client.donate(&donor, &id, &500);
+    
+    env.budget().reset_default();
+    s.client.emergency_fast_track(&id);
+    
+    env.budget().reset_default();
+    s.client.approve_milestone(&id, &s.proof());
+    
+    env.budget().reset_default();
+    s.client.cancel_campaign(&s.creator, &id);
+    
+    env.budget().reset_default();
+    s.client.refund(&donor, &id);
+}
+
+// ─── Issue #25 Tests: Assert Exact Events ─────────────────────────────────────
+
+#[test]
+fn test_exact_events_emitted() {
+    let s = Setup::new();
+    let env = &s.env;
+    let donor = s.donor(1000);
+    
+    let deadline = env.ledger().timestamp() + 30 * DAY;
+    let uri = String::from_str(env, "ipfs://events-test");
+    let milestones = vec![env, 300, 700];
+
+    s.client.add_verifier(&donor);
+    let events = env.events().all();
+    let verifier_updated_event = events.last().unwrap();
+    assert_eq!(
+        verifier_updated_event,
+        (
+            s.client.address.clone(),
+            soroban_sdk::vec![
+                env,
+                soroban_sdk::Symbol::new(env, "VerifierUpdated").into_val(env),
+                donor.into_val(env)
+            ],
+            true.into_val(env) // active: bool
+        )
+    );
+
+    env.events().all().clear();
+
+    let id = s.client.create_campaign(
+        &s.creator,
+        &s.beneficiary,
+        &s.verifier,
+        &CampaignKind::Emergency,
+        &uri,
+        &deadline,
+        &milestones,
+    );
+    let events = env.events().all();
+    let campaign_created_event = events.last().unwrap();
+    assert_eq!(
+        campaign_created_event,
+        (
+            s.client.address.clone(),
+            soroban_sdk::vec![
+                env,
+                soroban_sdk::Symbol::new(env, "CampaignCreated").into_val(env),
+                id.into_val(env)
+            ],
+            (s.creator.clone(), CampaignKind::Emergency, 1000_i128, deadline).into_val(env)
+        )
+    );
+
+    s.client.donate(&donor, &id, &500);
+    let events = env.events().all();
+    let donated_event = events.last().unwrap();
+    assert_eq!(
+        donated_event,
+        (
+            s.client.address.clone(),
+            soroban_sdk::vec![
+                env,
+                soroban_sdk::Symbol::new(env, "Donated").into_val(env),
+                id.into_val(env),
+                donor.into_val(env)
+            ],
+            500_i128.into_val(env)
+        )
+    );
+
+    s.client.emergency_fast_track(&id);
+    let events = env.events().all();
+    let emergency_event = events.last().unwrap();
+    assert_eq!(
+        emergency_event,
+        (
+            s.client.address.clone(),
+            soroban_sdk::vec![
+                env,
+                soroban_sdk::Symbol::new(env, "EmergencyAdvanceReleased").into_val(env),
+                id.into_val(env),
+                s.verifier.into_val(env)
+            ],
+            (0_u32, 200_i128).into_val(env) // milestone_index, amount
+        )
+    );
+
+    s.client.approve_milestone(&id, &s.proof());
+    let events = env.events().all();
+    let milestone_event = events.last().unwrap();
+    assert_eq!(
+        milestone_event,
+        (
+            s.client.address.clone(),
+            soroban_sdk::vec![
+                env,
+                soroban_sdk::Symbol::new(env, "MilestoneReleased").into_val(env),
+                id.into_val(env)
+            ],
+            (0_u32, 300_i128, s.proof()).into_val(env) // index, amount, proof_uri
+        )
+    );
+
+    s.client.cancel_campaign(&s.creator, &id);
+    let events = env.events().all();
+    let cancelled_event = events.last().unwrap();
+    assert_eq!(
+        cancelled_event,
+        (
+            s.client.address.clone(),
+            soroban_sdk::vec![
+                env,
+                soroban_sdk::Symbol::new(env, "CampaignCancelled").into_val(env),
+                id.into_val(env)
+            ],
+            ().into_val(env) // no data fields
+        )
+    );
+
+    s.client.refund(&donor, &id);
+    let events = env.events().all();
+    let refunded_event = events.last().unwrap();
+    assert_eq!(
+        refunded_event,
+        (
+            s.client.address.clone(),
+            soroban_sdk::vec![
+                env,
+                soroban_sdk::Symbol::new(env, "Refunded").into_val(env),
+                id.into_val(env),
+                donor.into_val(env)
+            ],
+            350_i128.into_val(env) // amount refunded
+        )
+    );
+}
+
+// ─── Issue #26 Tests: Per-milestone due dates ────────────────────────────────
+
+#[test]
+fn due_date_refunds_do_not_cancel_campaign() {
+    let s = Setup::new();
+    let env = &s.env;
+    
+    let now = env.ledger().timestamp();
+    let due_dates = vec![env, now + 10 * DAY, now + 20 * DAY];
+    let milestones = vec![env, 300, 700];
+    
+    let id = s.client.create_campaign_with_due_dates(
+        &s.creator,
+        &s.beneficiary,
+        &s.verifier,
+        &CampaignKind::Emergency,
+        &String::from_str(env, "ipfs://due-dates"),
+        &(now + 30 * DAY),
+        &milestones,
+        &due_dates,
+    );
+    
+    let donor_a = s.donor(500);
+    let donor_b = s.donor(500);
+    
+    s.client.donate(&donor_a, &id, &500);
+    s.client.donate(&donor_b, &id, &500);
+    
+    s.client.approve_milestone(&id, &s.proof()); // 300 released
+    
+    env.ledger().set_timestamp(now + 21 * DAY);
+    
+    let refund_a = s.client.refund(&donor_a, &id);
+    assert_eq!(refund_a, 350);
+    
+    let c = s.client.get_campaign(&id);
+    assert_eq!(c.status, CampaignStatus::Active);
+    assert_eq!(c.raised, 500);
+    assert_eq!(c.released, 150);
+    
+    let refund_b = s.client.refund(&donor_b, &id);
+    assert_eq!(refund_b, 350);
+    
+    let c2 = s.client.get_campaign(&id);
+    assert_eq!(c2.raised, 0);
+    assert_eq!(c2.released, 0);
+}

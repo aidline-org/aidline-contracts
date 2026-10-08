@@ -21,10 +21,17 @@ pub use errors::Error;
 pub use types::{Campaign, CampaignKind, CampaignStatus};
 
 use events::{
-    CampaignCancelled, CampaignCreated, Donated, MilestoneReleased, Refunded, VerifierUpdated,
+    CampaignCancelled, CampaignCreated, Donated, EmergencyAdvanceReleased, MilestoneReleased,
+    Refunded, VerifierUpdated,
 };
 
 const MAX_MILESTONES: u32 = 20;
+
+/// The emergency advance is capped at 20% of the campaign goal (200 bps out of
+/// 1000, or equivalently goal / 5).  Integer arithmetic: advance = goal / 5
+/// (rounds down, so the cap is never exceeded).
+const EMERGENCY_ADVANCE_BPS: i128 = 2_000; // 20% in basis points
+const BPS_DENOM: i128 = 10_000;
 
 #[contract]
 pub struct Aidline;
@@ -115,6 +122,7 @@ impl Aidline {
             raised: 0,
             released: 0,
             status: CampaignStatus::Active,
+            emergency_advance: 0,
         };
         storage::save_campaign(&env, &campaign);
 
@@ -126,6 +134,35 @@ impl Aidline {
             deadline,
         }
         .publish(&env);
+        Ok(id)
+    }
+
+    /// Creates a campaign with per-milestone due dates.
+    pub fn create_campaign_with_due_dates(
+        env: Env,
+        creator: Address,
+        beneficiary: Address,
+        verifier: Address,
+        kind: CampaignKind,
+        metadata_uri: String,
+        deadline: u64,
+        milestones: Vec<i128>,
+        milestone_due_dates: Vec<u64>,
+    ) -> Result<u64, Error> {
+        let id = Self::create_campaign(
+            env.clone(),
+            creator,
+            beneficiary,
+            verifier,
+            kind,
+            metadata_uri,
+            deadline,
+            milestones.clone(),
+        )?;
+        if milestone_due_dates.len() != milestones.len() {
+            return Err(Error::InvalidMilestones);
+        }
+        storage::set_milestone_due_dates(&env, id, &milestone_due_dates);
         Ok(id)
     }
 
@@ -165,9 +202,77 @@ impl Aidline {
         Ok(())
     }
 
+    /// Emergency fast track: release a partial first tranche immediately for
+    /// `Emergency` campaigns.
+    ///
+    /// # Rules
+    /// - Only works for `Emergency` campaigns.
+    /// - Only callable by the campaign's registered verifier.
+    /// - Can only be triggered once per campaign (advance is recorded).
+    /// - Advance is capped at `min(20% of goal, available escrow)`.
+    /// - The released amount is recorded as `emergency_advance` and is
+    ///   deducted from the normal milestone-0 release later so the total paid
+    ///   for milestone 0 never exceeds its scheduled amount.
+    pub fn emergency_fast_track(env: Env, campaign_id: u64) -> Result<i128, Error> {
+        let mut campaign = storage::campaign(&env, campaign_id)?;
+        campaign.verifier.require_auth();
+
+        // Only Emergency campaigns may use the fast track.
+        if campaign.kind != CampaignKind::Emergency {
+            return Err(Error::NotEmergencyCampaign);
+        }
+        if !storage::is_verifier(&env, &campaign.verifier) {
+            return Err(Error::NotVerifier);
+        }
+        Self::ensure_open(&env, &campaign)?;
+
+        // Fast track can only be used once.
+        if campaign.emergency_advance > 0 {
+            return Err(Error::AdvanceAlreadyTaken);
+        }
+
+        // Cap: 20% of goal, rounded down (favors the contract, never exceeds).
+        let cap = campaign.goal * EMERGENCY_ADVANCE_BPS / BPS_DENOM;
+
+        // Available escrow = raised − already released.
+        let available = campaign.raised - campaign.released;
+        if available <= 0 {
+            return Err(Error::AdvanceExceedsEscrow);
+        }
+
+        // Advance is the lesser of the 20% cap and available escrow.
+        let advance = if available < cap { available } else { cap };
+
+        token::Client::new(&env, &storage::token(&env)).transfer(
+            &env.current_contract_address(),
+            &campaign.beneficiary,
+            &advance,
+        );
+
+        // Record: advance is accounted as both released and emergency_advance.
+        campaign.released += advance;
+        campaign.emergency_advance = advance;
+        storage::save_campaign(&env, &campaign);
+
+        EmergencyAdvanceReleased {
+            campaign_id,
+            verifier: campaign.verifier.clone(),
+            milestone_index: 0,
+            amount: advance,
+        }
+        .publish(&env);
+
+        Ok(advance)
+    }
+
     /// Called by the campaign's verifier once the next milestone is done.
     /// Pays that milestone to the beneficiary. `proof_uri` points at the
     /// evidence (photos, receipts, reports) and is emitted for indexers.
+    ///
+    /// For milestone 0 of an Emergency campaign that used the fast track, only
+    /// the remaining amount (milestone_amount − emergency_advance) is
+    /// transferred. The total paid for milestone 0 therefore equals the
+    /// scheduled amount exactly.
     pub fn approve_milestone(env: Env, campaign_id: u64, proof_uri: String) -> Result<i128, Error> {
         let mut campaign = storage::campaign(&env, campaign_id)?;
         campaign.verifier.require_auth();
@@ -177,21 +282,32 @@ impl Aidline {
         Self::ensure_open(&env, &campaign)?;
 
         let index = campaign.milestones_released;
-        let amount = campaign
+        let milestone_amount = campaign
             .milestones
             .get(index)
             .ok_or(Error::NoMilestonesLeft)?;
-        if campaign.raised - campaign.released < amount {
+
+        // For milestone 0: deduct any emergency advance already paid.
+        let already_paid = if index == 0 { campaign.emergency_advance } else { 0 };
+        let remaining = milestone_amount - already_paid;
+
+        // Ensure the remaining unfunded portion is covered by escrow.
+        // available_escrow = raised - released (released already includes the advance)
+        let available = campaign.raised - campaign.released;
+        if available < remaining {
             return Err(Error::MilestoneNotFunded);
         }
 
-        token::Client::new(&env, &storage::token(&env)).transfer(
-            &env.current_contract_address(),
-            &campaign.beneficiary,
-            &amount,
-        );
+        // Transfer only the remaining amount if there was an advance.
+        if remaining > 0 {
+            token::Client::new(&env, &storage::token(&env)).transfer(
+                &env.current_contract_address(),
+                &campaign.beneficiary,
+                &remaining,
+            );
+        }
 
-        campaign.released += amount;
+        campaign.released += remaining;
         campaign.milestones_released += 1;
         if campaign.milestones_released == campaign.milestones.len() {
             campaign.status = CampaignStatus::Completed;
@@ -201,11 +317,11 @@ impl Aidline {
         MilestoneReleased {
             campaign_id,
             index,
-            amount,
+            amount: milestone_amount, // emit the full scheduled amount for indexers
             proof_uri,
         }
         .publish(&env);
-        Ok(amount)
+        Ok(milestone_amount)
     }
 
     /// Stops a campaign early so donors can reclaim unreleased funds.
@@ -232,11 +348,15 @@ impl Aidline {
     /// without completing.
     pub fn refund(env: Env, donor: Address, campaign_id: u64) -> Result<i128, Error> {
         donor.require_auth();
-        let campaign = storage::campaign(&env, campaign_id)?;
+        let mut campaign = storage::campaign(&env, campaign_id)?;
 
         let expired = campaign.status == CampaignStatus::Active
             && env.ledger().timestamp() > campaign.deadline;
-        if campaign.status != CampaignStatus::Cancelled && !expired {
+            
+        let is_overdue = Self::is_overdue(&env, &campaign);
+        let ended = campaign.status == CampaignStatus::Cancelled || expired;
+
+        if !ended && !is_overdue {
             return Err(Error::RefundNotAvailable);
         }
 
@@ -244,8 +364,7 @@ impl Aidline {
         if contributed == 0 {
             return Err(Error::NothingToRefund);
         }
-        // `raised` and `released` are frozen once refunds open, so every donor
-        // is measured against the same pool.
+        
         let unreleased = campaign.raised - campaign.released;
         let amount = contributed * unreleased / campaign.raised;
 
@@ -256,6 +375,13 @@ impl Aidline {
                 &donor,
                 &amount,
             );
+        }
+
+        if !ended {
+            let released_portion = contributed - amount;
+            campaign.raised -= contributed;
+            campaign.released -= released_portion;
+            storage::save_campaign(&env, &campaign);
         }
 
         Refunded {
@@ -303,5 +429,19 @@ impl Aidline {
             return Err(Error::CampaignExpired);
         }
         Ok(())
+    }
+
+    fn is_overdue(env: &Env, campaign: &Campaign) -> bool {
+        if campaign.status != CampaignStatus::Active {
+            return false;
+        }
+        if let Some(due_dates) = storage::milestone_due_dates(env, campaign.id) {
+            if let Some(due_date) = due_dates.get(campaign.milestones_released) {
+                if env.ledger().timestamp() > due_date {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }

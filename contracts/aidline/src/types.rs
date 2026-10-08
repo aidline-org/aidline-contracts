@@ -42,6 +42,11 @@ pub struct Campaign {
     pub raised: i128,
     pub released: i128,
     pub status: CampaignStatus,
+    // Issue #23 — emergency first-milestone advance.
+    /// Amount already paid to the beneficiary as an emergency advance against
+    /// milestone 0.  Zero for non-Emergency campaigns and for Emergency
+    /// campaigns that have not yet used the fast track.
+    pub emergency_advance: i128,
 }
 
 #[contracttype]
@@ -53,4 +58,6 @@ pub enum DataKey {
     Verifier(Address),
     Campaign(u64),
     Contribution(u64, Address),
+    // Issue #26 — per-milestone due dates
+    MilestoneDueDates(u64),
 }

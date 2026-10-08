@@ -42,6 +42,16 @@ This document explains how the Aidline contract is put together and why. If you 
 
 Expiry is computed from the ledger timestamp rather than stored, so no one needs to send a transaction to "close" a campaign.
 
+## Emergency Fast Track
+
+For `Emergency` campaigns, the assigned verifier can release an emergency fast-track advance immediately, before milestone one is completed. 
+This provides critical funds in the first hours of a disaster without waiting for a full milestone to be funded or proven.
+
+- **Cap:** The advance is hard-capped at 20% of the campaign's total goal.
+- **Escrow requirements:** The advance cannot exceed the currently available unreleased escrow.
+- **Accounting:** The advance is recorded against milestone one (`milestones[0]`). When the verifier later formally approves milestone one, the contract only transfers the remaining balance (if any) of that milestone to the beneficiary. The total funds released for milestone one never exceed its scheduled amount.
+- **Security:** Only the registered verifier can trigger the fast track. It is only available for `Emergency` campaigns, and only once per campaign.
+
 ## Storage
 
 | Key | Storage type | Value |
@@ -71,6 +81,7 @@ Integer division rounds down, so a few stroops of dust can remain in the contrac
 | --- | --- | --- |
 | `campaign_created` | `campaign_id` | `creator`, `kind`, `goal`, `deadline` |
 | `donated` | `campaign_id`, `donor` | `amount` |
+| `emergency_advance_released` | `campaign_id`, `verifier` | `milestone_index`, `amount` |
 | `milestone_released` | `campaign_id` | `index`, `amount`, `proof_uri` |
 | `campaign_cancelled` | `campaign_id` | none |
 | `refunded` | `campaign_id`, `donor` | `amount` |
@@ -92,10 +103,35 @@ The backend indexer reads these to build campaign pages, donor histories and imp
 
 ## Known limitations and roadmap
 
-- Emergency fast track: release a small first tranche right away for Emergency campaigns
 - Verifier reassignment for a live campaign
 - Multisig verification (m of n verifiers per milestone)
 - Overfunding and stretch goals
 - Multi token campaigns
 - TTL keeper for very long climate campaigns
 - External security audit before mainnet
+
+## Resource Costs (Issue #24)
+
+To help contributors understand the impact of contract changes, the following table tracks the resource costs (CPU instructions and memory usage) for the main entry points.
+
+| Function | CPU Instructions | Memory | Notes |
+| -------- | ---------------: | -----: | ----- |
+| `create_campaign` | (Requires Regeneration) | (Requires Regeneration) | 2 milestones |
+| `donate` | (Requires Regeneration) | (Requires Regeneration) | Standard donation |
+| `emergency_fast_track` | (Requires Regeneration) | (Requires Regeneration) | First-time advance |
+| `approve_milestone` | (Requires Regeneration) | (Requires Regeneration) | Milestone 1 |
+| `cancel_campaign` | (Requires Regeneration) | (Requires Regeneration) | By creator |
+| `refund` | (Requires Regeneration) | (Requires Regeneration) | Single donor |
+
+*Note: The values above currently require regeneration.*
+
+### How to regenerate the table
+
+Maintainers can regenerate these measurements using the built-in test environment. The test `test_measure_resource_costs` in `contracts/aidline/src/test.rs` executes each entry point and resets the budget.
+
+1. Ensure you have the Soroban CLI and test tools installed.
+2. Run the test and capture the output:
+   ```bash
+   cargo test test_measure_resource_costs -- --nocapture
+   ```
+3. Read the printed budget costs for each step and update the table above.

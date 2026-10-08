@@ -17,4 +17,8 @@ pub enum Error {
     RefundNotAvailable = 11,
     NothingToRefund = 12,
     Unauthorized = 13,
+    // Issue #23 — emergency fast track
+    NotEmergencyCampaign = 14,
+    AdvanceAlreadyTaken = 15,
+    AdvanceExceedsEscrow = 16,
 }
