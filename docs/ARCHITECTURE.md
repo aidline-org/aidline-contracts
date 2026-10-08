@@ -96,6 +96,7 @@ Sponsors are also included in the refund pool (their `Contribution` entry tracks
 | `campaign_cancelled` | `campaign_id` | none |
 | `refunded` | `campaign_id`, `donor` | `amount` |
 | `verifier_updated` | `verifier` | `active` |
+| `admin_changed` | `old_admin` | `new_admin` |
 | `sponsor_pool_deposited` | `campaign_id`, `sponsor` | `amount`, `ratio_bps`, `cap` |
 | `matching_applied` | `campaign_id`, `sponsor` | `donor`, `donation_amount`, `matched_amount` |
 | `sponsor_pool_returned` | `campaign_id`, `sponsor` | `amount` |
@@ -107,6 +108,7 @@ Sponsors are also included in the refund pool (their `Contribution` entry tracks
 | `pledge_pulled` | `pledge_id`, `campaign_id` | `donor`, `pulled_amount` |
 | `pledge_skipped` | `pledge_id`, `campaign_id` | `donor`, `reason` |
 | `pledge_settlement` | `campaign_id` | `milestone_index`, `total_pledged_pulled` |
+| `verifier_reassigned` | `campaign_id` | `old_verifier`, `new_verifier` |
 
 The backend indexer reads these to build campaign pages, donor histories and impact reports without scanning contract storage.
 
@@ -120,7 +122,7 @@ The backend indexer reads these to build campaign pages, donor histories and imp
 
 **One token per deployment.** Multi asset support is a planned improvement.
 
-**Removing a verifier freezes their campaigns.** Funds are not lost: the creator or admin can cancel, which opens refunds. Reassigning a verifier is a planned improvement.
+**Removing a verifier freezes their campaigns.** Funds are not lost: the creator or admin can cancel, which opens refunds. The admin can also reassign the verifier on an active campaign using `reassign_verifier`.
 
 ---
 

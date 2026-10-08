@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use soroban_sdk::{Address, Env, String, symbol_short};
 
 use crate::types::CampaignKind;
@@ -90,6 +92,41 @@ impl VerifierUpdated {
     pub fn publish(&self, env: &Env) {
         env.events()
             .publish((symbol_short!("verifier"), self.verifier.clone()), self.active);
+    }
+}
+
+// ─── Issue #2: Admin change event ─────────────────────────────────────────────
+
+/// Emitted when the admin transfers control to a new address.
+pub struct AdminChanged {
+    pub old: Address,
+    pub new: Address,
+}
+
+impl AdminChanged {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("adm_chng"), self.old.clone()),
+            self.new.clone(),
+        );
+    }
+}
+
+// ─── Issue #4: Verifier reassignment event ────────────────────────────────────
+
+/// Emitted when the admin reassigns a campaign to a different verifier.
+pub struct VerifierReassigned {
+    pub campaign_id: u64,
+    pub old_verifier: Address,
+    pub new_verifier: Address,
+}
+
+impl VerifierReassigned {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("vf_reass"), self.campaign_id),
+            (self.old_verifier.clone(), self.new_verifier.clone()),
+        );
     }
 }
 
@@ -266,21 +303,28 @@ impl PledgeSettlement {
             self.total_pledged_pulled,
         );
     }
+}
+
 // ─── Issue #23: Emergency fast-track event ───────────────────────────────────
 
 /// Emitted when a verifier releases an emergency advance for the first
-/// milestone of an Emergency campaign.  Indexers use this to track that the
+/// milestone of an Emergency campaign. Indexers use this to track that the
 /// advance has been paid and to deduct it from the subsequent normal
-/// milestone-one release.
-#[contractevent]
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// milestone release.
 pub struct EmergencyAdvanceReleased {
-    #[topic]
     pub campaign_id: u64,
-    #[topic]
     pub verifier: Address,
     /// Milestone index the advance is charged against (always 0).
     pub milestone_index: u32,
     /// Amount transferred to the beneficiary as the advance.
     pub amount: i128,
+}
+
+impl EmergencyAdvanceReleased {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("em_adv"), self.campaign_id, self.verifier.clone()),
+            (self.milestone_index, self.amount),
+        );
+    }
 }
