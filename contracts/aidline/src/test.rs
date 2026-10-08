@@ -464,6 +464,21 @@ fn test_measure_resource_costs() {
     // Maintainers: to regenerate the resource-cost table, run this test with
     // `cargo test test_measure_resource_costs -- --nocapture` and insert
     // the output costs into `docs/ARCHITECTURE.md`.
+    
+    env.budget().reset_default();
+    s.client.donate(&donor, &id, &500);
+    
+    env.budget().reset_default();
+    s.client.emergency_fast_track(&id);
+    
+    env.budget().reset_default();
+    s.client.approve_milestone(&id, &s.proof());
+    
+    env.budget().reset_default();
+    s.client.cancel_campaign(&s.creator, &id);
+    
+    env.budget().reset_default();
+    s.client.refund(&donor, &id);
 }
 
 // ─── Issue #25 Tests: Assert Exact Events ─────────────────────────────────────
@@ -484,6 +499,8 @@ fn test_exact_events_emitted() {
     s.client.add_verifier(&donor);
     let events = env.events().all();
     // Assuming it's the last event
+    s.client.add_verifier(&donor);
+    let events = env.events().all();
     let verifier_updated_event = events.last().unwrap();
     assert_eq!(
         verifier_updated_event,
@@ -502,6 +519,8 @@ fn test_exact_events_emitted() {
     env.events().all().clear();
 
     // 2. CampaignCreated
+    env.events().all().clear();
+
     let id = s.client.create_campaign(
         &s.creator,
         &s.beneficiary,
@@ -659,6 +678,18 @@ fn due_date_refunds_do_not_cancel_campaign() {
     
     let refund_b = s.client.refund(&donor_b, &id);
     assert_eq!(refund_b, 350); // 500 * (500 - 150) / 500 = 350
+    env.ledger().set_timestamp(now + 21 * DAY);
+    
+    let refund_a = s.client.refund(&donor_a, &id);
+    assert_eq!(refund_a, 350);
+    
+    let c = s.client.get_campaign(&id);
+    assert_eq!(c.status, CampaignStatus::Active);
+    assert_eq!(c.raised, 500);
+    assert_eq!(c.released, 150);
+    
+    let refund_b = s.client.refund(&donor_b, &id);
+    assert_eq!(refund_b, 350);
     
     let c2 = s.client.get_campaign(&id);
     assert_eq!(c2.raised, 0);

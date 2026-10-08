@@ -181,6 +181,13 @@ pub fn next_pledge_id(env: &Env) -> u64 {
     id
 }
 
+pub fn next_pledge_id_peek(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::PledgeCount)
+        .unwrap_or(0)
+}
+
 pub fn pledge(env: &Env, pledge_id: u64) -> Option<Pledge> {
     let key = DataKey::Pledge(pledge_id);
     let p = env.storage().persistent().get(&key)?;
@@ -191,5 +198,20 @@ pub fn pledge(env: &Env, pledge_id: u64) -> Option<Pledge> {
 pub fn save_pledge(env: &Env, p: &Pledge) {
     let key = DataKey::Pledge(p.pledge_id);
     env.storage().persistent().set(&key, p);
+    bump(env, &key);
+}
+
+// ─── Issue #26: Per-milestone due dates storage ──────────────────────────────
+
+pub fn milestone_due_dates(env: &Env, campaign_id: u64) -> Option<soroban_sdk::Vec<u64>> {
+    let key = DataKey::MilestoneDueDates(campaign_id);
+    let dates = env.storage().persistent().get(&key)?;
+    bump(env, &key);
+    Some(dates)
+}
+
+pub fn set_milestone_due_dates(env: &Env, campaign_id: u64, due_dates: &soroban_sdk::Vec<u64>) {
+    let key = DataKey::MilestoneDueDates(campaign_id);
+    env.storage().persistent().set(&key, due_dates);
     bump(env, &key);
 }

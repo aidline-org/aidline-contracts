@@ -266,4 +266,21 @@ impl PledgeSettlement {
             self.total_pledged_pulled,
         );
     }
+// ─── Issue #23: Emergency fast-track event ───────────────────────────────────
+
+/// Emitted when a verifier releases an emergency advance for the first
+/// milestone of an Emergency campaign.  Indexers use this to track that the
+/// advance has been paid and to deduct it from the subsequent normal
+/// milestone-one release.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmergencyAdvanceReleased {
+    #[topic]
+    pub campaign_id: u64,
+    #[topic]
+    pub verifier: Address,
+    /// Milestone index the advance is charged against (always 0).
+    pub milestone_index: u32,
+    /// Amount transferred to the beneficiary as the advance.
+    pub amount: i128,
 }
