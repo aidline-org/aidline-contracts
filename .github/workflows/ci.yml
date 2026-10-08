@@ -49,7 +49,7 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Run fuzz target (30 s)
-        working-directory: fuzz
+        # cargo-fuzz looks for ./fuzz, so it must run from the repository root.
         # -max_total_time limits the wall-clock run; -max_len=4096 keeps
         # inputs small so the fuzzer exercises more paths per second.
         run: |
