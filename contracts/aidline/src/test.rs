@@ -680,3 +680,83 @@ fn two_donors_reach_goal_exactly_campaign_fully_funded() {
     assert_eq!(released, 500);
     assert_eq!(s.token.balance(&s.beneficiary), 500);
 }
+
+// ─── Issue #4 Tests: Verifier reassignment ───────────────────────────────────
+
+#[test]
+fn admin_can_reassign_verifier_on_active_campaign() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let new_v = Address::generate(&s.env);
+    s.client.add_verifier(&new_v);
+
+    // reassign_verifier emits VerifierReassigned; events() returns events from
+    // the most recent invocation — must be non-empty after the call.
+    s.client.reassign_verifier(&id, &new_v);
+    assert!(
+        !s.env.events().all().events().is_empty(),
+        "VerifierReassigned event not emitted"
+    );
+
+    let c = s.client.get_campaign(&id);
+    assert_eq!(c.verifier, new_v);
+}
+
+#[test]
+fn reassign_fails_for_unregistered_verifier() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let stranger = Address::generate(&s.env);
+
+    assert_eq!(
+        s.client.try_reassign_verifier(&id, &stranger),
+        Err(Ok(Error::NotVerifier))
+    );
+}
+
+#[test]
+fn reassign_fails_for_cancelled_campaign() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let new_v = Address::generate(&s.env);
+    s.client.add_verifier(&new_v);
+
+    s.client.cancel_campaign(&s.admin, &id);
+    assert_eq!(
+        s.client.try_reassign_verifier(&id, &new_v),
+        Err(Ok(Error::CampaignNotActive))
+    );
+}
+
+#[test]
+fn reassign_fails_for_expired_campaign() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let new_v = Address::generate(&s.env);
+    s.client.add_verifier(&new_v);
+
+    s.pass_deadline();
+    assert_eq!(
+        s.client.try_reassign_verifier(&id, &new_v),
+        Err(Ok(Error::CampaignExpired))
+    );
+}
+
+#[test]
+fn new_verifier_can_approve_after_reassignment() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let donor = s.donor(1000);
+    s.client.donate(&donor, &id, &1000);
+
+    // Remove old verifier and reassign to a new one.
+    s.client.remove_verifier(&s.verifier);
+    let new_v = Address::generate(&s.env);
+    s.client.add_verifier(&new_v);
+    s.client.reassign_verifier(&id, &new_v);
+
+    // New verifier controls the campaign; milestone should release.
+    let released = s.client.approve_milestone(&id, &s.proof());
+    assert_eq!(released, 300);
+    assert_eq!(s.client.get_campaign(&id).verifier, new_v);
+}
