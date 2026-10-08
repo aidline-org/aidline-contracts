@@ -16,12 +16,7 @@ impl CampaignCreated {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
             (symbol_short!("created"), self.campaign_id),
-            (
-                self.creator.clone(),
-                self.kind,
-                self.goal,
-                self.deadline,
-            ),
+            (self.creator.clone(), self.kind, self.goal, self.deadline),
         );
     }
 }
@@ -35,7 +30,11 @@ pub struct Donated {
 impl Donated {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("donated"), self.campaign_id, self.donor.clone()),
+            (
+                symbol_short!("donated"),
+                self.campaign_id,
+                self.donor.clone(),
+            ),
             self.amount,
         );
     }
@@ -77,7 +76,11 @@ pub struct Refunded {
 impl Refunded {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("refunded"), self.campaign_id, self.donor.clone()),
+            (
+                symbol_short!("refunded"),
+                self.campaign_id,
+                self.donor.clone(),
+            ),
             self.amount,
         );
     }
@@ -90,8 +93,10 @@ pub struct VerifierUpdated {
 
 impl VerifierUpdated {
     pub fn publish(&self, env: &Env) {
-        env.events()
-            .publish((symbol_short!("verifier"), self.verifier.clone()), self.active);
+        env.events().publish(
+            (symbol_short!("verifier"), self.verifier.clone()),
+            self.active,
+        );
     }
 }
 
@@ -143,7 +148,11 @@ pub struct SponsorPoolDeposited {
 impl SponsorPoolDeposited {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("sp_depos"), self.campaign_id, self.sponsor.clone()),
+            (
+                symbol_short!("sp_depos"),
+                self.campaign_id,
+                self.sponsor.clone(),
+            ),
             (self.amount, self.ratio_bps, self.cap),
         );
     }
@@ -160,8 +169,16 @@ pub struct MatchingApplied {
 impl MatchingApplied {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("sp_match"), self.campaign_id, self.sponsor.clone()),
-            (self.donor.clone(), self.donation_amount, self.matched_amount),
+            (
+                symbol_short!("sp_match"),
+                self.campaign_id,
+                self.sponsor.clone(),
+            ),
+            (
+                self.donor.clone(),
+                self.donation_amount,
+                self.matched_amount,
+            ),
         );
     }
 }
@@ -175,7 +192,11 @@ pub struct SponsorPoolReturned {
 impl SponsorPoolReturned {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("sp_ret"), self.campaign_id, self.sponsor.clone()),
+            (
+                symbol_short!("sp_ret"),
+                self.campaign_id,
+                self.sponsor.clone(),
+            ),
             self.amount,
         );
     }
@@ -234,7 +255,11 @@ pub struct BondSlashed {
 impl BondSlashed {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("vb_slash"), self.verifier.clone(), self.campaign_id),
+            (
+                symbol_short!("vb_slash"),
+                self.verifier.clone(),
+                self.campaign_id,
+            ),
             self.slashed_amount,
         );
     }
@@ -252,7 +277,11 @@ pub struct PledgeCreated {
 impl PledgeCreated {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("pl_creat"), self.campaign_id, self.donor.clone()),
+            (
+                symbol_short!("pl_creat"),
+                self.campaign_id,
+                self.donor.clone(),
+            ),
             (self.pledge_id, self.pledged_amount),
         );
     }
@@ -268,7 +297,11 @@ pub struct PledgePulled {
 impl PledgePulled {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("pl_pull"), self.campaign_id, self.donor.clone()),
+            (
+                symbol_short!("pl_pull"),
+                self.campaign_id,
+                self.donor.clone(),
+            ),
             (self.pledge_id, self.pulled_amount),
         );
     }
@@ -284,7 +317,11 @@ pub struct PledgeSkipped {
 impl PledgeSkipped {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("pl_skip"), self.campaign_id, self.donor.clone()),
+            (
+                symbol_short!("pl_skip"),
+                self.campaign_id,
+                self.donor.clone(),
+            ),
             (self.pledge_id, self.reason),
         );
     }
@@ -299,7 +336,11 @@ pub struct PledgeSettlement {
 impl PledgeSettlement {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("pl_settl"), self.campaign_id, self.milestone_index),
+            (
+                symbol_short!("pl_settl"),
+                self.campaign_id,
+                self.milestone_index,
+            ),
             self.total_pledged_pulled,
         );
     }
@@ -323,7 +364,11 @@ pub struct EmergencyAdvanceReleased {
 impl EmergencyAdvanceReleased {
     pub fn publish(&self, env: &Env) {
         env.events().publish(
-            (symbol_short!("em_adv"), self.campaign_id, self.verifier.clone()),
+            (
+                symbol_short!("em_adv"),
+                self.campaign_id,
+                self.verifier.clone(),
+            ),
             (self.milestone_index, self.amount),
         );
     }

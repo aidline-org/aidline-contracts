@@ -165,11 +165,7 @@ impl Aidline {
     /// - [`Error::BondRequired`] — `bond_amount` is below the required minimum
     ///   or is zero.
     /// - [`Error::Unauthorized`] — `verifier` is already registered.
-    pub fn register_with_bond(
-        env: Env,
-        verifier: Address,
-        bond_amount: i128,
-    ) -> Result<(), Error> {
+    pub fn register_with_bond(env: Env, verifier: Address, bond_amount: i128) -> Result<(), Error> {
         verifier.require_auth();
 
         let required = storage::bond_requirement(&env);
@@ -345,12 +341,7 @@ impl Aidline {
                 .checked_add(slash_amount)
                 .unwrap_or(campaign.raised);
             storage::save_campaign(&env, &campaign);
-            storage::set_contribution(
-                &env,
-                campaign_id,
-                &contract_addr,
-                prev + slash_amount,
-            );
+            storage::set_contribution(&env, campaign_id, &contract_addr, prev + slash_amount);
         }
 
         BondSlashed {
@@ -649,8 +640,8 @@ impl Aidline {
             return Err(Error::InvalidAmount);
         }
 
-        let mut pool = storage::sponsor_pool(&env, campaign_id, &sponsor)
-            .ok_or(Error::SponsorPoolNotFound)?;
+        let mut pool =
+            storage::sponsor_pool(&env, campaign_id, &sponsor).ok_or(Error::SponsorPoolNotFound)?;
 
         let mut campaign = storage::campaign(&env, campaign_id)?;
         Self::ensure_open(&env, &campaign)?;
@@ -719,8 +710,8 @@ impl Aidline {
     ) -> Result<i128, Error> {
         sponsor.require_auth();
 
-        let pool = storage::sponsor_pool(&env, campaign_id, &sponsor)
-            .ok_or(Error::SponsorPoolNotFound)?;
+        let pool =
+            storage::sponsor_pool(&env, campaign_id, &sponsor).ok_or(Error::SponsorPoolNotFound)?;
 
         let campaign = storage::campaign(&env, campaign_id)?;
 
@@ -923,8 +914,13 @@ impl Aidline {
 
         // Pull from pledges before checking funding.
         let pledge_count = storage::next_pledge_id_peek(&env);
-        let total_pledged_pulled =
-            Self::pull_pledges(&env, campaign_id, milestone_amount, pledge_count, &mut campaign);
+        let total_pledged_pulled = Self::pull_pledges(
+            &env,
+            campaign_id,
+            milestone_amount,
+            pledge_count,
+            &mut campaign,
+        );
 
         // Emit settlement event.
         PledgeSettlement {
@@ -935,7 +931,11 @@ impl Aidline {
         .publish(&env);
 
         // For milestone 0 of an Emergency campaign, deduct any advance already paid.
-        let already_paid = if index == 0 { campaign.emergency_advance } else { 0 };
+        let already_paid = if index == 0 {
+            campaign.emergency_advance
+        } else {
+            0
+        };
         let remaining = milestone_amount - already_paid;
 
         // Ensure available escrow covers the remaining unfunded portion.
@@ -1135,11 +1135,7 @@ impl Aidline {
     }
 
     /// Returns the [`SponsorPool`] for `sponsor` on `campaign_id`, or `None`.
-    pub fn get_sponsor_pool(
-        env: Env,
-        campaign_id: u64,
-        sponsor: Address,
-    ) -> Option<SponsorPool> {
+    pub fn get_sponsor_pool(env: Env, campaign_id: u64, sponsor: Address) -> Option<SponsorPool> {
         storage::sponsor_pool(&env, campaign_id, &sponsor)
     }
 
@@ -1199,7 +1195,8 @@ impl Aidline {
                 active_pledges.push_back(p);
             }
             i += 1;
-        }        if total_remaining == 0 || active_pledges.is_empty() {
+        }
+        if total_remaining == 0 || active_pledges.is_empty() {
             return 0;
         }
 
@@ -1253,12 +1250,7 @@ impl Aidline {
             }
 
             // Transfer tokens from donor to contract.
-            tok.transfer_from(
-                &contract_addr,
-                &pledge.donor,
-                &contract_addr,
-                &pull,
-            );
+            tok.transfer_from(&contract_addr, &pledge.donor, &contract_addr, &pull);
 
             // Update pledge record.
             pledge.pulled_amount += pull;
