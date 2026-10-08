@@ -1,0 +1,29 @@
+[package]
+name = "aidline-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+# cargo-fuzz requires the crate to be a binary crate.
+[[bin]]
+name = "fuzz_contract"
+path = "fuzz_targets/fuzz_contract.rs"
+test = false
+doc = false
+
+[dependencies]
+# libfuzzer-sys provides the fuzzer entry point macro.
+libfuzzer-sys = "0.4"
+# We depend on the aidline contract as a library to drive it from the harness.
+aidline = { path = "../contracts/aidline" }
+# We use soroban-sdk test utilities to set up the environment.
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[workspace]
+# Declare this as its own workspace so it is not part of the main workspace.
+# This is the canonical cargo-fuzz setup.
+
+[profile.release]
+# Fuzzing requires debug symbols for coverage feedback.
+debug = 1
+overflow-checks = true
