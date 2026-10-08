@@ -13,11 +13,11 @@
 //! rustup override set nightly
 //! ```
 //!
-//! From the repository root, run a short bounded fuzz session:
+//! From the repository root (not from inside `fuzz/`), run a short bounded
+//! fuzz session:
 //!
 //! ```sh
-//! cd fuzz
-//! cargo fuzz run fuzz_contract -- -max_total_time=60
+//! cargo +nightly fuzz run fuzz_contract -- -max_total_time=60
 //! ```
 //!
 //! The `-max_total_time=60` flag limits the run to 60 seconds.
@@ -42,12 +42,13 @@
 //!
 //! # Note on execution
 //!
-//! This file is source code only. It is NOT executed as part of the normal
-//! `cargo test` suite. It requires `cargo-fuzz` and a nightly Rust toolchain.
-//! Do not run it in CI unless you have explicitly installed those prerequisites.
+//! This harness is not part of the normal `cargo test` suite. It requires
+//! `cargo-fuzz` and a nightly Rust toolchain. CI runs it for 30 seconds in a
+//! separate job.
 
 #![no_main]
 
+use aidline::{Aidline, AidlineClient, CampaignKind, CampaignStatus};
 use libfuzzer_sys::fuzz_target;
 use soroban_sdk::{
     Address, Env, String as SorobanString,
@@ -55,7 +56,6 @@ use soroban_sdk::{
     token::{StellarAssetClient, TokenClient},
     vec as soroban_vec,
 };
-use aidline::{Aidline, AidlineClient, CampaignKind, CampaignStatus};
 
 // ─── Structured fuzz input ────────────────────────────────────────────────────
 
@@ -66,15 +66,26 @@ use aidline::{Aidline, AidlineClient, CampaignKind, CampaignStatus};
 /// with a moderate number of iterations.
 #[derive(Debug)]
 enum Op {
-    Donate { amount_mod: u32 },
+    Donate {
+        amount_mod: u32,
+    },
     ApproveMilestone,
     Cancel,
-    Refund { use_donor_b: bool },
-    DepositSponsorPool { ratio_bps_mod: u8, cap_mod: u32 },
-    ApplyMatching { donation_mod: u32 },
+    Refund {
+        use_donor_b: bool,
+    },
+    DepositSponsorPool {
+        ratio_bps_mod: u8,
+        cap_mod: u32,
+    },
+    ApplyMatching {
+        donation_mod: u32,
+    },
     ReturnSponsorPool,
     /// Advance the ledger timestamp, potentially expiring the campaign.
-    AdvanceTime { seconds: u32 },
+    AdvanceTime {
+        seconds: u32,
+    },
 }
 
 /// Decode raw bytes into a sequence of operations using a simple byte-driven
@@ -231,17 +242,16 @@ fuzz_target!(|data: &[u8]| {
     let milestones = soroban_vec![&env, 100_i128, 200_i128, 300_i128];
     let goal: i128 = 600;
     let deadline = env.ledger().timestamp() + 30 * 86_400;
-    let campaign_id = client
-        .try_create_campaign(
-            &creator,
-            &beneficiary,
-            &verifier,
-            &CampaignKind::Emergency,
-            &SorobanString::from_str(&env, "ipfs://fuzz"),
-            &deadline,
-            &milestones,
-        )
-        .unwrap_or_else(|_| 0);
+    // Setup must succeed, so use the panicking client call here.
+    let campaign_id = client.create_campaign(
+        &creator,
+        &beneficiary,
+        &verifier,
+        &CampaignKind::Emergency,
+        &SorobanString::from_str(&env, "ipfs://fuzz"),
+        &deadline,
+        &milestones,
+    );
 
     // ── Model initial state ─────────────────────────────────────────────────
     let mut model = Model {
@@ -265,7 +275,8 @@ fuzz_target!(|data: &[u8]| {
                 let amount = (amount_mod as i128 % 601).max(1);
                 let _ = client.try_donate(&donor_a, &campaign_id, &amount);
                 // Sync model from contract state after each op
-                if let Ok(c) = client.try_get_campaign(&campaign_id) {
+                {
+                    let c = client.get_campaign(&campaign_id);
                     model.raised = c.raised;
                     model.released = c.released;
                     model.milestones_released = c.milestones_released;
@@ -275,7 +286,8 @@ fuzz_target!(|data: &[u8]| {
             Op::ApproveMilestone => {
                 let proof = SorobanString::from_str(&env, "ipfs://fuzz-proof");
                 let _ = client.try_approve_milestone(&campaign_id, &proof);
-                if let Ok(c) = client.try_get_campaign(&campaign_id) {
+                {
+                    let c = client.get_campaign(&campaign_id);
                     model.raised = c.raised;
                     model.released = c.released;
                     model.milestones_released = c.milestones_released;
@@ -284,14 +296,16 @@ fuzz_target!(|data: &[u8]| {
             }
             Op::Cancel => {
                 let _ = client.try_cancel_campaign(&creator, &campaign_id);
-                if let Ok(c) = client.try_get_campaign(&campaign_id) {
+                {
+                    let c = client.get_campaign(&campaign_id);
                     model.status = c.status;
                 }
             }
             Op::Refund { use_donor_b } => {
                 let donor = if use_donor_b { &donor_b } else { &donor_a };
                 let _ = client.try_refund(donor, &campaign_id);
-                if let Ok(c) = client.try_get_campaign(&campaign_id) {
+                {
+                    let c = client.get_campaign(&campaign_id);
                     model.raised = c.raised;
                     model.released = c.released;
                 }
@@ -318,19 +332,13 @@ fuzz_target!(|data: &[u8]| {
             Op::ApplyMatching { donation_mod } => {
                 if sponsor_pool_active {
                     let donation = (donation_mod as i128 % 300).max(1);
-                    let _ = client.try_apply_matching(
-                        &sponsor,
-                        &campaign_id,
-                        &donor_a,
-                        &donation,
-                    );
-                    if let Some(pool) =
-                        client.try_get_sponsor_pool(&campaign_id, &sponsor).ok().flatten()
-                    {
+                    let _ = client.try_apply_matching(&sponsor, &campaign_id, &donor_a, &donation);
+                    if let Some(pool) = client.get_sponsor_pool(&campaign_id, &sponsor) {
                         model.sponsor_remaining = pool.remaining;
                         model.sponsor_matched = pool.matched;
                     }
-                    if let Ok(c) = client.try_get_campaign(&campaign_id) {
+                    {
+                        let c = client.get_campaign(&campaign_id);
                         model.raised = c.raised;
                     }
                 }
@@ -359,19 +367,14 @@ fuzz_target!(|data: &[u8]| {
         model.check_invariants();
 
         // Invariant 8: Completed/Cancelled campaign blocks new donations.
-        if model.status == CampaignStatus::Completed
-            || model.status == CampaignStatus::Cancelled
-        {
+        if model.status == CampaignStatus::Completed || model.status == CampaignStatus::Cancelled {
             assert!(
                 client.try_donate(&donor_a, &campaign_id, &1).is_err(),
                 "donate succeeded on a finished campaign"
             );
             assert!(
                 client
-                    .try_approve_milestone(
-                        &campaign_id,
-                        &SorobanString::from_str(&env, "x")
-                    )
+                    .try_approve_milestone(&campaign_id, &SorobanString::from_str(&env, "x"))
                     .is_err(),
                 "approve succeeded on a finished campaign"
             );
