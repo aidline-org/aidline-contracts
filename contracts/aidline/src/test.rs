@@ -77,6 +77,8 @@ impl<'a> Setup<'a> {
     }
 }
 
+// ─── Existing tests ────────────────────────────────────────────────────────────
+
 #[test]
 fn creates_campaign_with_goal_from_milestones() {
     let s = Setup::new();
@@ -293,4 +295,266 @@ fn missing_campaign_errors() {
         s.client.try_get_campaign(&42),
         Err(Ok(Error::CampaignNotFound))
     );
+}
+
+// ─── Issue #27: Sponsor matching fund tests ────────────────────────────────────
+
+/// Helper: mint tokens to an address via the Stellar Asset Client.
+fn mint(env: &Env, token_addr: &Address, to: &Address, amount: i128) {
+    StellarAssetClient::new(env, token_addr).mint(to, &amount);
+}
+
+#[test]
+fn sponsor_can_deposit_pool() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    mint(&s.env, &s.token.address, &sponsor, 500);
+
+    // ratio 50 % (5000 bps), cap 500, deposit 500
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5000, &500, &500);
+
+    let pool = s.client.get_sponsor_pool(&id, &sponsor).unwrap();
+    assert_eq!(pool.deposited, 500);
+    assert_eq!(pool.remaining, 500);
+    assert_eq!(pool.matched, 0);
+    assert_eq!(pool.ratio_bps, 5000);
+    assert_eq!(pool.cap, 500);
+    // Tokens moved into contract
+    assert_eq!(s.token.balance(&sponsor), 0);
+    assert_eq!(s.token.balance(&s.client.address), 500);
+}
+
+#[test]
+fn sponsor_pool_rejects_invalid_config() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    mint(&s.env, &s.token.address, &sponsor, 1000);
+
+    // ratio 0 bps is invalid
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &id, &0, &500, &500),
+        Err(Ok(Error::InvalidMatchingConfig))
+    );
+    // ratio > 10000 is invalid
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &id, &10001, &500, &500),
+        Err(Ok(Error::InvalidMatchingConfig))
+    );
+    // amount != cap is invalid
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &id, &5000, &500, &300),
+        Err(Ok(Error::InvalidMatchingConfig))
+    );
+    // cap == 0 is invalid
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &id, &5000, &0, &0),
+        Err(Ok(Error::InvalidMatchingConfig))
+    );
+}
+
+#[test]
+fn matching_ratio_works_correctly() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    // 100 % match pool of 1000
+    mint(&s.env, &s.token.address, &sponsor, 1000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &10000, &1000, &1000);
+
+    let donor = s.donor(200);
+    s.client.donate(&donor, &id, &200);
+
+    // apply matching: 100 % of 200 = 200 matched
+    let matched = s.client.apply_matching(&sponsor, &id, &donor, &200);
+    assert_eq!(matched, 200);
+
+    let pool = s.client.get_sponsor_pool(&id, &sponsor).unwrap();
+    assert_eq!(pool.matched, 200);
+    assert_eq!(pool.remaining, 800);
+
+    // campaign raised = 200 (donation) + 200 (match) = 400
+    assert_eq!(s.client.get_campaign(&id).raised, 400);
+}
+
+#[test]
+fn matching_cap_is_enforced() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    // 100 % match but cap of 100
+    mint(&s.env, &s.token.address, &sponsor, 100);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &10000, &100, &100);
+
+    let donor = s.donor(500);
+    s.client.donate(&donor, &id, &300);
+
+    // apply matching: raw would be 300 but cap is 100
+    let matched = s.client.apply_matching(&sponsor, &id, &donor, &300);
+    assert_eq!(matched, 100);
+
+    let pool = s.client.get_sponsor_pool(&id, &sponsor).unwrap();
+    assert_eq!(pool.matched, 100);
+    assert_eq!(pool.remaining, 0);
+}
+
+#[test]
+fn pool_exhaustion_stops_matching() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    // 100 % match, pool = 50
+    mint(&s.env, &s.token.address, &sponsor, 50);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &10000, &50, &50);
+
+    let donor = s.donor(500);
+    s.client.donate(&donor, &id, &100);
+
+    // First match: 50 matched (pool exhausted)
+    let m1 = s.client.apply_matching(&sponsor, &id, &donor, &100);
+    assert_eq!(m1, 50);
+
+    // Second match: pool is exhausted → 0
+    let m2 = s.client.apply_matching(&sponsor, &id, &donor, &100);
+    assert_eq!(m2, 0);
+
+    let pool = s.client.get_sponsor_pool(&id, &sponsor).unwrap();
+    assert_eq!(pool.remaining, 0);
+    assert_eq!(pool.matched, 50);
+}
+
+#[test]
+fn partial_pool_exhaustion() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    // 50 % match, pool = 300
+    mint(&s.env, &s.token.address, &sponsor, 300);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5000, &300, &300);
+
+    let donor = s.donor(500);
+    s.client.donate(&donor, &id, &300);
+
+    // 50 % of 300 = 150 matched
+    let m = s.client.apply_matching(&sponsor, &id, &donor, &300);
+    assert_eq!(m, 150);
+
+    let pool = s.client.get_sponsor_pool(&id, &sponsor).unwrap();
+    assert_eq!(pool.remaining, 150);
+    assert_eq!(pool.matched, 150);
+}
+
+#[test]
+fn multiple_donations_consume_pool_correctly() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    // 100 % match, pool = 500
+    mint(&s.env, &s.token.address, &sponsor, 500);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &10000, &500, &500);
+
+    let alice = s.donor(300);
+    let bob = s.donor(300);
+    s.client.donate(&alice, &id, &200);
+    s.client.donate(&bob, &id, &200);
+
+    let m_alice = s.client.apply_matching(&sponsor, &id, &alice, &200);
+    let m_bob = s.client.apply_matching(&sponsor, &id, &bob, &200);
+    assert_eq!(m_alice, 200);
+    assert_eq!(m_bob, 200);
+
+    let pool = s.client.get_sponsor_pool(&id, &sponsor).unwrap();
+    assert_eq!(pool.matched, 400);
+    assert_eq!(pool.remaining, 100);
+}
+
+#[test]
+fn unused_funds_can_be_returned_after_campaign_ends() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    mint(&s.env, &s.token.address, &sponsor, 500);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &10000, &500, &500);
+
+    // Use 100 of the pool
+    let donor = s.donor(100);
+    s.client.donate(&donor, &id, &100);
+    s.client.apply_matching(&sponsor, &id, &donor, &100);
+
+    // Cancel campaign so funds can be returned
+    s.client.cancel_campaign(&s.creator, &id);
+
+    let returned = s.client.return_sponsor_pool(&sponsor, &id);
+    assert_eq!(returned, 400);
+    assert_eq!(s.token.balance(&sponsor), 400);
+    // Pool record is gone
+    assert!(s.client.get_sponsor_pool(&id, &sponsor).is_none());
+}
+
+#[test]
+fn cannot_return_pool_while_campaign_active() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    mint(&s.env, &s.token.address, &sponsor, 200);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5000, &200, &200);
+
+    // Campaign still active → return should fail
+    assert_eq!(
+        s.client.try_return_sponsor_pool(&sponsor, &id),
+        Err(Ok(Error::PoolNotReturnable))
+    );
+}
+
+#[test]
+fn duplicate_pool_deposit_is_rejected() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    mint(&s.env, &s.token.address, &sponsor, 1000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5000, &500, &500);
+
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &id, &5000, &200, &200),
+        Err(Ok(Error::SponsorPoolExists))
+    );
+}
+
+#[test]
+fn accounting_remains_consistent_after_matching() {
+    // Invariant: campaign.raised == sum of all donations + sum of all matched amounts
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = Address::generate(&s.env);
+    // 25 % match, pool = 200
+    mint(&s.env, &s.token.address, &sponsor, 200);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &2500, &200, &200);
+
+    let donor = s.donor(500);
+    s.client.donate(&donor, &id, &400); // raised = 400
+    let m = s.client.apply_matching(&sponsor, &id, &donor, &400); // 25 % of 400 = 100
+
+    let campaign = s.client.get_campaign(&id);
+    // raised must equal donation + match
+    assert_eq!(campaign.raised, 400 + m);
+    // sponsor contribution must equal matched amount
+    assert_eq!(s.client.contribution_of(&id, &sponsor), m);
+    // donor contribution must equal donation
+    assert_eq!(s.client.contribution_of(&id, &donor), 400);
 }

@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::errors::Error;
-use crate::types::{Campaign, DataKey};
+use crate::types::{Campaign, DataKey, SponsorPool};
 
 const DAY_IN_LEDGERS: u32 = 17_280;
 const INSTANCE_BUMP: u32 = 30 * DAY_IN_LEDGERS;
@@ -102,4 +102,24 @@ pub fn set_contribution(env: &Env, id: u64, donor: &Address, amount: i128) {
         env.storage().persistent().set(&key, &amount);
         bump(env, &key);
     }
+}
+
+// ─── Issue #27: Sponsor matching pool storage ────────────────────────────────
+
+pub fn sponsor_pool(env: &Env, campaign_id: u64, sponsor: &Address) -> Option<SponsorPool> {
+    let key = DataKey::SponsorPool(campaign_id, sponsor.clone());
+    let pool = env.storage().persistent().get(&key)?;
+    bump(env, &key);
+    Some(pool)
+}
+
+pub fn save_sponsor_pool(env: &Env, pool: &SponsorPool) {
+    let key = DataKey::SponsorPool(pool.campaign_id, pool.sponsor.clone());
+    env.storage().persistent().set(&key, pool);
+    bump(env, &key);
+}
+
+pub fn remove_sponsor_pool(env: &Env, campaign_id: u64, sponsor: &Address) {
+    let key = DataKey::SponsorPool(campaign_id, sponsor.clone());
+    env.storage().persistent().remove(&key);
 }
