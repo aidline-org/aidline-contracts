@@ -42,7 +42,7 @@ pub struct Campaign {
     pub raised: i128,
     pub released: i128,
     pub status: CampaignStatus,
-    // Issue #23 — emergency first-milestone advance.
+    // Issue #23: emergency first-milestone advance.
     /// Amount already paid to the beneficiary as an emergency advance against
     /// milestone 0.  Zero for non-Emergency campaigns and for Emergency
     /// campaigns that have not yet used the fast track.
@@ -83,7 +83,7 @@ pub struct SponsorPool {
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BondStatus {
-    /// Bond is active — verifier is currently registered.
+    /// Bond is active, verifier is currently registered.
     Active,
     /// Verifier has deregistered; withdrawal delay is counting down.
     PendingWithdrawal,
@@ -131,15 +131,15 @@ pub enum DataKey {
     Verifier(Address),
     Campaign(u64),
     Contribution(u64, Address),
-    // Issue #27 — sponsor matching pools
+    // Issue #27: sponsor matching pools
     SponsorPool(u64, Address),
-    // Issue #29 — verifier bonds
+    // Issue #29: verifier bonds
     VerifierBond(Address),
     BondRequirement,
     BondWithdrawDelay,
-    // Issue #30 — pledges
+    // Issue #30: pledges
     PledgeCount,
     Pledge(u64),
-    // Issue #26 — per-milestone due dates
+    // Issue #26: per-milestone due dates
     MilestoneDueDates(u64),
 }

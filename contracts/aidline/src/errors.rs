@@ -18,23 +18,23 @@ pub enum Error {
     RefundNotAvailable = 12,
     NothingToRefund = 13,
 
-    // Issue #27 — sponsor matching pools
+    // Issue #27: sponsor matching pools
     SponsorPoolExists = 14,
     SponsorPoolNotFound = 15,
     InvalidMatchingConfig = 16,
     PoolNotReturnable = 17,
 
-    // Issue #29 — verifier bonds
+    // Issue #29: verifier bonds
     BondRequired = 18,
     BondNotFound = 19,
     BondNotWithdrawable = 20,
     WithdrawDelayNotMet = 21,
     SlashExceedsBond = 22,
 
-    // Issue #30 — pledges
+    // Issue #30: pledges
     InvalidPledge = 23,
 
-    // Issue #23 — emergency fast track
+    // Issue #23: emergency fast track
     NotEmergencyCampaign = 24,
     AdvanceAlreadyTaken = 25,
     AdvanceExceedsEscrow = 26,

@@ -69,7 +69,7 @@ impl Aidline {
     /// `active = true`.
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — caller is not the admin (enforced via
+    /// - [`Error::Unauthorized`]: caller is not the admin (enforced via
     ///   `require_auth` on the stored admin address).
     pub fn add_verifier(env: Env, verifier: Address) {
         storage::admin(&env).require_auth();
@@ -88,7 +88,7 @@ impl Aidline {
     /// via [`reassign_verifier`]. Emits [`VerifierUpdated`] with `active = false`.
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — caller is not the admin (enforced via
+    /// - [`Error::Unauthorized`]: caller is not the admin (enforced via
     ///   `require_auth` on the stored admin address).
     pub fn remove_verifier(env: Env, verifier: Address) {
         storage::admin(&env).require_auth();
@@ -106,7 +106,7 @@ impl Aidline {
     /// both the old and new admin addresses so indexers can track the change.
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — caller is not the current admin (enforced
+    /// - [`Error::Unauthorized`]: caller is not the current admin (enforced
     ///   via `require_auth` on the stored admin address).
     pub fn set_admin(env: Env, new_admin: Address) {
         let old_admin = storage::admin(&env);
@@ -128,8 +128,8 @@ impl Aidline {
     /// requirement.
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — caller is not the admin.
-    /// - [`Error::InvalidAmount`] — `amount` is negative.
+    /// - [`Error::Unauthorized`]: caller is not the admin.
+    /// - [`Error::InvalidAmount`]: `amount` is negative.
     pub fn set_bond_requirement(env: Env, amount: i128) -> Result<(), Error> {
         storage::admin(&env).require_auth();
         if amount < 0 {
@@ -146,7 +146,7 @@ impl Aidline {
     /// slash a fraudulent verifier before they can withdraw funds.
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — caller is not the admin.
+    /// - [`Error::Unauthorized`]: caller is not the admin.
     pub fn set_bond_withdraw_delay(env: Env, delay: u64) {
         storage::admin(&env).require_auth();
         storage::set_bond_withdraw_delay(&env, delay);
@@ -162,9 +162,9 @@ impl Aidline {
     /// Emits [`VerifierBondPosted`].
     ///
     /// # Errors
-    /// - [`Error::BondRequired`] — `bond_amount` is below the required minimum
+    /// - [`Error::BondRequired`]: `bond_amount` is below the required minimum
     ///   or is zero.
-    /// - [`Error::Unauthorized`] — `verifier` is already registered.
+    /// - [`Error::Unauthorized`]: `verifier` is already registered.
     pub fn register_with_bond(env: Env, verifier: Address, bond_amount: i128) -> Result<(), Error> {
         verifier.require_auth();
 
@@ -210,8 +210,8 @@ impl Aidline {
     /// by [`set_bond_withdraw_delay`] has elapsed. Emits [`VerifierDeregistered`].
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — `caller` is neither `verifier` nor the admin.
-    /// - [`Error::NotVerifier`] — `verifier` is not currently registered.
+    /// - [`Error::Unauthorized`]: `caller` is neither `verifier` nor the admin.
+    /// - [`Error::NotVerifier`]: `verifier` is not currently registered.
     pub fn deregister_verifier(env: Env, caller: Address, verifier: Address) -> Result<(), Error> {
         caller.require_auth();
         let admin = storage::admin(&env);
@@ -249,10 +249,10 @@ impl Aidline {
     /// Emits [`BondWithdrawn`] and returns the amount transferred.
     ///
     /// # Errors
-    /// - [`Error::BondNotFound`] — no bond record exists for `verifier`.
-    /// - [`Error::BondNotWithdrawable`] — bond is not in `PendingWithdrawal`
+    /// - [`Error::BondNotFound`]: no bond record exists for `verifier`.
+    /// - [`Error::BondNotWithdrawable`]: bond is not in `PendingWithdrawal`
     ///   status, or the remaining amount is zero.
-    /// - [`Error::WithdrawDelayNotMet`] — the required delay since
+    /// - [`Error::WithdrawDelayNotMet`]: the required delay since
     ///   deregistration has not yet elapsed.
     pub fn withdraw_bond(env: Env, verifier: Address) -> Result<i128, Error> {
         verifier.require_auth();
@@ -300,11 +300,11 @@ impl Aidline {
     /// verifier's remaining bond. Emits [`BondSlashed`].
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — caller is not the admin.
-    /// - [`Error::InvalidAmount`] — `slash_amount` is zero or negative.
-    /// - [`Error::BondNotFound`] — no bond record exists for `verifier`.
-    /// - [`Error::BondNotWithdrawable`] — bond has already been withdrawn.
-    /// - [`Error::SlashExceedsBond`] — `slash_amount` exceeds remaining bond.
+    /// - [`Error::Unauthorized`]: caller is not the admin.
+    /// - [`Error::InvalidAmount`]: `slash_amount` is zero or negative.
+    /// - [`Error::BondNotFound`]: no bond record exists for `verifier`.
+    /// - [`Error::BondNotWithdrawable`]: bond has already been withdrawn.
+    /// - [`Error::SlashExceedsBond`]: `slash_amount` exceeds remaining bond.
     pub fn slash_verifier(
         env: Env,
         verifier: Address,
@@ -383,10 +383,10 @@ impl Aidline {
     /// Emits [`CampaignCreated`].
     ///
     /// # Errors
-    /// - [`Error::NotVerifier`] — `verifier` is not currently registered.
-    /// - [`Error::DeadlineInPast`] — `deadline` is not after the current
+    /// - [`Error::NotVerifier`]: `verifier` is not currently registered.
+    /// - [`Error::DeadlineInPast`]: `deadline` is not after the current
     ///   ledger timestamp.
-    /// - [`Error::InvalidMilestones`] — `milestones` is empty, exceeds
+    /// - [`Error::InvalidMilestones`]: `milestones` is empty, exceeds
     ///   [`MAX_MILESTONES`], contains a non-positive value, or the sum
     ///   overflows `i128`.
     pub fn create_campaign(
@@ -457,7 +457,7 @@ impl Aidline {
     ///
     /// # Errors
     /// All errors from [`create_campaign`] apply, plus:
-    /// - [`Error::InvalidMilestones`] — `milestone_due_dates` length differs
+    /// - [`Error::InvalidMilestones`]: `milestone_due_dates` length differs
     ///   from `milestones` length.
     pub fn create_campaign_with_due_dates(
         env: Env,
@@ -494,12 +494,12 @@ impl Aidline {
     /// donation must not exceed the campaign goal. Emits [`Donated`].
     ///
     /// # Errors
-    /// - [`Error::InvalidAmount`] — `amount` is zero or negative, or the
+    /// - [`Error::InvalidAmount`]: `amount` is zero or negative, or the
     ///   addition to `campaign.raised` overflows.
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::CampaignNotActive`] — campaign is not in `Active` status.
-    /// - [`Error::CampaignExpired`] — campaign deadline has passed.
-    /// - [`Error::GoalExceeded`] — donation would push `raised` above `goal`.
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::CampaignNotActive`]: campaign is not in `Active` status.
+    /// - [`Error::CampaignExpired`]: campaign deadline has passed.
+    /// - [`Error::GoalExceeded`]: donation would push `raised` above `goal`.
     pub fn donate(env: Env, donor: Address, campaign_id: u64, amount: i128) -> Result<(), Error> {
         donor.require_auth();
         if amount <= 0 {
@@ -549,12 +549,12 @@ impl Aidline {
     /// Emits [`SponsorPoolDeposited`].
     ///
     /// # Errors
-    /// - [`Error::InvalidMatchingConfig`] — `ratio_bps` is 0 or above 10 000,
+    /// - [`Error::InvalidMatchingConfig`]: `ratio_bps` is 0 or above 10 000,
     ///   `cap` or `amount` are non-positive, or `amount != cap`.
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`] — campaign
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`]: campaign
     ///   is not open.
-    /// - [`Error::SponsorPoolExists`] — a pool for this sponsor and campaign
+    /// - [`Error::SponsorPoolExists`]: a pool for this sponsor and campaign
     ///   already exists.
     pub fn deposit_sponsor_pool(
         env: Env,
@@ -622,12 +622,12 @@ impl Aidline {
     /// too small). Emits [`MatchingApplied`] when the matched amount is > 0.
     ///
     /// # Errors
-    /// - [`Error::InvalidAmount`] — `donation_amount` is zero or negative, or
+    /// - [`Error::InvalidAmount`]: `donation_amount` is zero or negative, or
     ///   the multiplication overflows.
-    /// - [`Error::SponsorPoolNotFound`] — no pool exists for this sponsor and
+    /// - [`Error::SponsorPoolNotFound`]: no pool exists for this sponsor and
     ///   campaign.
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`] — campaign
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`]: campaign
     ///   is not open.
     pub fn apply_matching(
         env: Env,
@@ -698,10 +698,10 @@ impl Aidline {
     /// [`SponsorPoolReturned`] and returns the amount returned.
     ///
     /// # Errors
-    /// - [`Error::SponsorPoolNotFound`] — no pool exists for this sponsor and
+    /// - [`Error::SponsorPoolNotFound`]: no pool exists for this sponsor and
     ///   campaign.
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::PoolNotReturnable`] — campaign is still active and has not
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::PoolNotReturnable`]: campaign is still active and has not
     ///   yet expired.
     pub fn return_sponsor_pool(
         env: Env,
@@ -756,10 +756,10 @@ impl Aidline {
     /// expired. Emits [`PledgeCreated`] and returns the pledge ID.
     ///
     /// # Errors
-    /// - [`Error::InvalidPledge`] — `pledged_amount` is zero or negative, or
+    /// - [`Error::InvalidPledge`]: `pledged_amount` is zero or negative, or
     ///   the donor's current token allowance is below `pledged_amount`.
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`] — campaign
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`]: campaign
     ///   is not open.
     pub fn create_pledge(
         env: Env,
@@ -777,7 +777,7 @@ impl Aidline {
         Self::ensure_open(&env, &campaign)?;
 
         // Verify the donor has granted sufficient allowance.
-        // We do not transfer tokens here — they are pulled at milestone approval.
+        // We do not transfer tokens here, they are pulled at milestone approval.
         let tok = token::Client::new(&env, &storage::token(&env));
         let allowance = tok.allowance(&donor, &env.current_contract_address());
         if allowance < pledged_amount {
@@ -815,15 +815,15 @@ impl Aidline {
     /// [`EmergencyAdvanceReleased`] and returns the amount transferred.
     ///
     /// # Errors
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::NotEmergencyCampaign`] — campaign `kind` is not `Emergency`.
-    /// - [`Error::NotVerifier`] — the campaign's verifier is no longer
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::NotEmergencyCampaign`]: campaign `kind` is not `Emergency`.
+    /// - [`Error::NotVerifier`]: the campaign's verifier is no longer
     ///   registered.
-    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`] — campaign
+    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`]: campaign
     ///   is not open.
-    /// - [`Error::AdvanceAlreadyTaken`] — the fast-track has already been used
+    /// - [`Error::AdvanceAlreadyTaken`]: the fast-track has already been used
     ///   on this campaign.
-    /// - [`Error::AdvanceExceedsEscrow`] — no funds are currently in escrow.
+    /// - [`Error::AdvanceExceedsEscrow`]: no funds are currently in escrow.
     pub fn emergency_fast_track(env: Env, campaign_id: u64) -> Result<i128, Error> {
         let mut campaign = storage::campaign(&env, campaign_id)?;
         campaign.verifier.require_auth();
@@ -889,14 +889,14 @@ impl Aidline {
     /// and returns the scheduled milestone amount.
     ///
     /// # Errors
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::NotVerifier`] — the campaign's verifier is no longer
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::NotVerifier`]: the campaign's verifier is no longer
     ///   registered.
-    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`] — campaign
+    /// - [`Error::CampaignNotActive`] / [`Error::CampaignExpired`]: campaign
     ///   is not open.
-    /// - [`Error::NoMilestonesLeft`] — all milestones have already been
+    /// - [`Error::NoMilestonesLeft`]: all milestones have already been
     ///   released.
-    /// - [`Error::MilestoneNotFunded`] — raised funds (minus already released)
+    /// - [`Error::MilestoneNotFunded`]: raised funds (minus already released)
     ///   are insufficient to cover the next milestone.
     pub fn approve_milestone(env: Env, campaign_id: u64, proof_uri: String) -> Result<i128, Error> {
         let mut campaign = storage::campaign(&env, campaign_id)?;
@@ -976,9 +976,9 @@ impl Aidline {
     /// must currently be `Active`. Emits [`CampaignCancelled`].
     ///
     /// # Errors
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::Unauthorized`] — caller is neither the creator nor the admin.
-    /// - [`Error::CampaignNotActive`] — campaign is not in `Active` status.
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::Unauthorized`]: caller is neither the creator nor the admin.
+    /// - [`Error::CampaignNotActive`]: campaign is not in `Active` status.
     pub fn cancel_campaign(env: Env, caller: Address, campaign_id: u64) -> Result<(), Error> {
         caller.require_auth();
         let mut campaign = storage::campaign(&env, campaign_id)?;
@@ -1005,10 +1005,10 @@ impl Aidline {
     /// and returns the amount transferred.
     ///
     /// # Errors
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::RefundNotAvailable`] — campaign is still active, not expired,
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::RefundNotAvailable`]: campaign is still active, not expired,
     ///   and no milestone is overdue.
-    /// - [`Error::NothingToRefund`] — `donor` has no recorded contribution.
+    /// - [`Error::NothingToRefund`]: `donor` has no recorded contribution.
     pub fn refund(env: Env, donor: Address, campaign_id: u64) -> Result<i128, Error> {
         donor.require_auth();
         let mut campaign = storage::campaign(&env, campaign_id)?;
@@ -1066,11 +1066,11 @@ impl Aidline {
     /// [`VerifierReassigned`].
     ///
     /// # Errors
-    /// - [`Error::Unauthorized`] — caller is not the admin.
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
-    /// - [`Error::CampaignNotActive`] — campaign is not in `Active` status.
-    /// - [`Error::CampaignExpired`] — campaign deadline has passed.
-    /// - [`Error::NotVerifier`] — `new_verifier` is not currently registered.
+    /// - [`Error::Unauthorized`]: caller is not the admin.
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
+    /// - [`Error::CampaignNotActive`]: campaign is not in `Active` status.
+    /// - [`Error::CampaignExpired`]: campaign deadline has passed.
+    /// - [`Error::NotVerifier`]: `new_verifier` is not currently registered.
     pub fn reassign_verifier(
         env: Env,
         campaign_id: u64,
@@ -1104,7 +1104,7 @@ impl Aidline {
     /// Returns the [`Campaign`] for `campaign_id`.
     ///
     /// # Errors
-    /// - [`Error::CampaignNotFound`] — no campaign with `campaign_id` exists.
+    /// - [`Error::CampaignNotFound`]: no campaign with `campaign_id` exists.
     pub fn get_campaign(env: Env, campaign_id: u64) -> Result<Campaign, Error> {
         storage::campaign(&env, campaign_id)
     }

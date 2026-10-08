@@ -126,7 +126,7 @@ The backend indexer reads these to build campaign pages, donor histories and imp
 
 ---
 
-## Issue #27 — Sponsor Matching Funds
+## Issue #27: Sponsor Matching Funds
 
 ### What it is
 
@@ -152,7 +152,7 @@ The effective match for a single call to `apply_matching` is the minimum of:
 1. `raw_match` (ratio-based)
 2. `pool.cap - pool.matched` (cap headroom)
 3. `pool.remaining` (undepleted pool balance)
-4. `campaign.goal - campaign.raised` (campaign headroom — cannot overfund)
+4. `campaign.goal - campaign.raised` (campaign headroom, cannot overfund)
 
 ### When the pool is exhausted
 
@@ -164,11 +164,11 @@ After the campaign is no longer active (Completed, Cancelled, or past its deadli
 
 ### Why `apply_matching` is separate from `donate`
 
-Soroban persistent storage does not support prefix-scanning (iterating all keys with a given prefix). Because sponsors are not enumerable inside `donate`, the matching must be triggered explicitly. Any account — the donor, the sponsor, or a keeper — may call `apply_matching` at any time while the campaign is active.
+Soroban persistent storage does not support prefix-scanning (iterating all keys with a given prefix). Because sponsors are not enumerable inside `donate`, the matching must be triggered explicitly. Any account, the donor, the sponsor, or a keeper, may call `apply_matching` at any time while the campaign is active.
 
 ### Accounting and security trade-offs
 
-- **Funds are always real.** The pool is funded up front, so `apply_matching` never mints tokens — it only moves accounting entries.
+- **Funds are always real.** The pool is funded up front, so `apply_matching` never mints tokens, it only moves accounting entries.
 - **Sponsors share in refunds.** The sponsor's matched amount is recorded as a `Contribution` entry, so they receive a pro-rata refund of unmatched/unreleased funds when a campaign is cancelled or expired. Additionally, `return_sponsor_pool` returns any tokens that were deposited but never matched.
 - **No overfunding.** The campaign-headroom cap ensures that matching cannot push `raised` above `goal`.
 - **One pool per sponsor per campaign.** Prevents accidental double-deposits. A sponsor must call `return_sponsor_pool` to clear a pool before creating a new one.
@@ -176,7 +176,7 @@ Soroban persistent storage does not support prefix-scanning (iterating all keys 
 
 ---
 
-## Issue #29 — Verifier Bonds and Slashing
+## Issue #29: Verifier Bonds and Slashing
 
 ### Why verifier bonds exist
 
@@ -223,7 +223,7 @@ Preventing double-slash for the same dispute is enforced by tracking slashed amo
 - Only the admin can slash.
 - A verifier cannot withdraw a slashed portion.
 - The withdrawal delay ensures time for the admin to act on disputes.
-- Slashing distributes through the existing refund formula — no new distribution logic needed.
+- Slashing distributes through the existing refund formula, no new distribution logic needed.
 
 ### Trade-offs
 
@@ -232,7 +232,7 @@ Preventing double-slash for the same dispute is enforced by tracking slashed amo
 
 ---
 
-## Issue #30 — Pledges That Fund Future Milestones on Approval
+## Issue #30: Pledges That Fund Future Milestones on Approval
 
 ### Why pledges exist
 

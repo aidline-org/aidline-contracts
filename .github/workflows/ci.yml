@@ -34,7 +34,7 @@ jobs:
   fuzz:
     # Run a short bounded fuzz session in CI (Issue #28).
     # The job uses a nightly toolchain and cargo-fuzz.
-    # It runs for a maximum of 30 seconds — enough to catch obvious regressions
+    # It runs for a maximum of 30 seconds, enough to catch obvious regressions
     # without slowing the pipeline significantly.
     runs-on: ubuntu-latest
     steps:

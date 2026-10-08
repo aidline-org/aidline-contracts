@@ -459,7 +459,7 @@ fn test_measure_resource_costs() {
     env.cost_estimate().budget().reset_default();
     s.client.cancel_campaign(&s.creator, &id2);
 
-    // 6. refund — pass deadline so refund is available on the original campaign
+    // 6. refund, pass deadline so refund is available on the original campaign
     s.pass_deadline();
     env.cost_estimate().budget().reset_default();
     s.client.refund(&donor, &id);
@@ -566,7 +566,7 @@ fn due_date_refunds_do_not_cancel_campaign() {
     // Advance past first milestone due date, into second milestone window.
     env.ledger().set_timestamp(now + 21 * DAY);
 
-    // Milestone 1 is now overdue — refunds become available.
+    // Milestone 1 is now overdue, refunds become available.
     let refund_a = s.client.refund(&donor_a, &id);
     assert_eq!(refund_a, 350); // 500 * 700 / 1000
 
@@ -668,7 +668,7 @@ fn two_donors_reach_goal_exactly_campaign_fully_funded() {
     assert_eq!(c.raised, 500);
     assert_eq!(c.raised, c.goal);
 
-    // Campaign is exactly at goal — no room for even 1 more token.
+    // Campaign is exactly at goal, no room for even 1 more token.
     let d3 = s.donor(10);
     assert_eq!(
         s.client.try_donate(&d3, &id, &1),
@@ -691,7 +691,7 @@ fn admin_can_reassign_verifier_on_active_campaign() {
     s.client.add_verifier(&new_v);
 
     // reassign_verifier emits VerifierReassigned; events() returns events from
-    // the most recent invocation — must be non-empty after the call.
+    // the most recent invocation, must be non-empty after the call.
     s.client.reassign_verifier(&id, &new_v);
     assert!(
         !s.env.events().all().events().is_empty(),

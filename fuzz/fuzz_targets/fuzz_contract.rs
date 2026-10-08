@@ -1,7 +1,7 @@
 //! Fuzz harness for the Aidline contract.
 //!
 //! This target drives randomized sequences of the primary contract operations
-//! — create, donate, approve, cancel, refund — and checks a set of financial
+//! (create, donate, approve, cancel, refund) and checks a set of financial
 //! invariants after each step.
 //!
 //! # Running locally
