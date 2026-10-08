@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::errors::Error;
-use crate::types::{Campaign, DataKey, SponsorPool};
+use crate::types::{Campaign, DataKey, Pledge, SponsorPool, VerifierBond};
 
 const DAY_IN_LEDGERS: u32 = 17_280;
 const INSTANCE_BUMP: u32 = 30 * DAY_IN_LEDGERS;
@@ -122,4 +122,74 @@ pub fn save_sponsor_pool(env: &Env, pool: &SponsorPool) {
 pub fn remove_sponsor_pool(env: &Env, campaign_id: u64, sponsor: &Address) {
     let key = DataKey::SponsorPool(campaign_id, sponsor.clone());
     env.storage().persistent().remove(&key);
+}
+
+// ─── Issue #29: Verifier bond storage ────────────────────────────────────────
+
+/// Required bond amount. 0 = no bond required (default).
+pub fn bond_requirement(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::BondRequirement)
+        .unwrap_or(0)
+}
+
+pub fn set_bond_requirement(env: &Env, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::BondRequirement, &amount);
+}
+
+/// Withdrawal delay in seconds after deregistration. 0 = no delay (default).
+pub fn bond_withdraw_delay(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::BondWithdrawDelay)
+        .unwrap_or(0)
+}
+
+pub fn set_bond_withdraw_delay(env: &Env, delay: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::BondWithdrawDelay, &delay);
+}
+
+pub fn verifier_bond(env: &Env, verifier: &Address) -> Option<VerifierBond> {
+    let key = DataKey::VerifierBond(verifier.clone());
+    let bond = env.storage().persistent().get(&key)?;
+    bump(env, &key);
+    Some(bond)
+}
+
+pub fn save_verifier_bond(env: &Env, bond: &VerifierBond) {
+    let key = DataKey::VerifierBond(bond.verifier.clone());
+    env.storage().persistent().set(&key, bond);
+    bump(env, &key);
+}
+
+// ─── Issue #30: Pledge storage ────────────────────────────────────────────────
+
+pub fn next_pledge_id(env: &Env) -> u64 {
+    let id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::PledgeCount)
+        .unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&DataKey::PledgeCount, &(id + 1));
+    id
+}
+
+pub fn pledge(env: &Env, pledge_id: u64) -> Option<Pledge> {
+    let key = DataKey::Pledge(pledge_id);
+    let p = env.storage().persistent().get(&key)?;
+    bump(env, &key);
+    Some(p)
+}
+
+pub fn save_pledge(env: &Env, p: &Pledge) {
+    let key = DataKey::Pledge(p.pledge_id);
+    env.storage().persistent().set(&key, p);
+    bump(env, &key);
 }

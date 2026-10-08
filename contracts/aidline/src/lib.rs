@@ -18,11 +18,12 @@ mod test;
 use soroban_sdk::{Address, Env, String, Vec, contract, contractimpl, token};
 
 pub use errors::Error;
-pub use types::{Campaign, CampaignKind, CampaignStatus, SponsorPool};
+pub use types::{BondStatus, Campaign, CampaignKind, CampaignStatus, SponsorPool, VerifierBond};
 
 use events::{
-    CampaignCancelled, CampaignCreated, Donated, MatchingApplied, MilestoneReleased, Refunded,
-    SponsorPoolDeposited, SponsorPoolReturned, VerifierUpdated,
+    BondSlashed, BondWithdrawn, CampaignCancelled, CampaignCreated, Donated, MatchingApplied,
+    MilestoneReleased, Refunded, SponsorPoolDeposited, SponsorPoolReturned, VerifierBondPosted,
+    VerifierDeregistered, VerifierUpdated,
 };
 
 const MAX_MILESTONES: u32 = 20;
@@ -42,7 +43,7 @@ impl Aidline {
         storage::bump_instance(&env);
     }
 
-    // Admin
+    // ─── Admin ────────────────────────────────────────────────────────────────
 
     pub fn add_verifier(env: Env, verifier: Address) {
         storage::admin(&env).require_auth();
@@ -71,7 +72,254 @@ impl Aidline {
         storage::set_admin(&env, &new_admin);
     }
 
-    // Campaigns
+    // ─── Issue #29: Bond configuration (admin only) ───────────────────────────
+
+    /// Set the minimum bond amount a verifier must post when registering.
+    /// Set to 0 to disable the bond requirement (default).
+    pub fn set_bond_requirement(env: Env, amount: i128) -> Result<(), Error> {
+        storage::admin(&env).require_auth();
+        if amount < 0 {
+            return Err(Error::InvalidAmount);
+        }
+        storage::set_bond_requirement(&env, amount);
+        Ok(())
+    }
+
+    /// Set the delay (in seconds) after deregistration before a verifier can
+    /// withdraw their bond. Default is 0 (no delay).
+    pub fn set_bond_withdraw_delay(env: Env, delay: u64) {
+        storage::admin(&env).require_auth();
+        storage::set_bond_withdraw_delay(&env, delay);
+    }
+
+    // ─── Issue #29: Bonded verifier registration ──────────────────────────────
+
+    /// Register as a verifier by posting the required bond.
+    ///
+    /// `bond_amount` must be >= the configured `bond_requirement`. The tokens
+    /// are transferred from the verifier to the contract and held until the
+    /// verifier deregisters and the withdrawal delay expires.
+    pub fn register_with_bond(
+        env: Env,
+        verifier: Address,
+        bond_amount: i128,
+    ) -> Result<(), Error> {
+        verifier.require_auth();
+
+        let required = storage::bond_requirement(&env);
+        if bond_amount < required || bond_amount <= 0 {
+            return Err(Error::BondRequired);
+        }
+
+        // Prevent double-registration
+        if storage::is_verifier(&env, &verifier) {
+            return Err(Error::Unauthorized);
+        }
+
+        // Transfer bond from verifier to contract
+        token::Client::new(&env, &storage::token(&env)).transfer(
+            &verifier,
+            &env.current_contract_address(),
+            &bond_amount,
+        );
+
+        let bond = VerifierBond {
+            verifier: verifier.clone(),
+            amount: bond_amount,
+            remaining: bond_amount,
+            status: BondStatus::Active,
+            deregistered_at: 0,
+        };
+        storage::save_verifier_bond(&env, &bond);
+        storage::set_verifier(&env, &verifier, true);
+
+        VerifierBondPosted {
+            verifier,
+            amount: bond_amount,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Deregister as a verifier and start the withdrawal delay timer.
+    ///
+    /// The verifier remains in `PendingWithdrawal` state; their bond cannot be
+    /// withdrawn until `bond_withdraw_delay` seconds have elapsed.
+    /// The verifier's campaigns are frozen (as with `remove_verifier`).
+    ///
+    /// Can be called by the verifier themselves or by the admin.
+    pub fn deregister_verifier(env: Env, caller: Address, verifier: Address) -> Result<(), Error> {
+        caller.require_auth();
+        let admin = storage::admin(&env);
+        if caller != verifier && caller != admin {
+            return Err(Error::Unauthorized);
+        }
+
+        // Verifier must be currently active
+        if !storage::is_verifier(&env, &verifier) {
+            return Err(Error::NotVerifier);
+        }
+
+        // Remove from active registry
+        storage::set_verifier(&env, &verifier, false);
+
+        let now = env.ledger().timestamp();
+
+        // Update bond record if one exists
+        if let Some(mut bond) = storage::verifier_bond(&env, &verifier) {
+            bond.status = BondStatus::PendingWithdrawal;
+            bond.deregistered_at = now;
+            storage::save_verifier_bond(&env, &bond);
+        }
+
+        VerifierDeregistered {
+            verifier,
+            deregistered_at: now,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Withdraw the verifier's bond after the withdrawal delay has passed.
+    ///
+    /// Only the verifier themselves can withdraw their own bond.
+    /// A slashed bond cannot be withdrawn beyond the remaining amount.
+    pub fn withdraw_bond(env: Env, verifier: Address) -> Result<i128, Error> {
+        verifier.require_auth();
+
+        let mut bond = storage::verifier_bond(&env, &verifier).ok_or(Error::BondNotFound)?;
+
+        // Bond must be in PendingWithdrawal (not Active or Withdrawn or Slashed)
+        if bond.status != BondStatus::PendingWithdrawal {
+            return Err(Error::BondNotWithdrawable);
+        }
+
+        // Enforce withdrawal delay
+        let delay = storage::bond_withdraw_delay(&env);
+        let elapsed = env.ledger().timestamp() - bond.deregistered_at;
+        if elapsed < delay {
+            return Err(Error::WithdrawDelayNotMet);
+        }
+
+        let withdrawable = bond.remaining;
+        if withdrawable <= 0 {
+            return Err(Error::BondNotWithdrawable);
+        }
+
+        bond.remaining = 0;
+        bond.status = BondStatus::Withdrawn;
+        storage::save_verifier_bond(&env, &bond);
+
+        token::Client::new(&env, &storage::token(&env)).transfer(
+            &env.current_contract_address(),
+            &verifier,
+            &withdrawable,
+        );
+
+        BondWithdrawn {
+            verifier,
+            amount: withdrawable,
+        }
+        .publish(&env);
+
+        Ok(withdrawable)
+    }
+
+    /// Admin slashes a verifier's bond after a documented dispute.
+    ///
+    /// The slashed tokens are distributed back to the affected campaign's
+    /// donors by adding them to `campaign.raised` and crediting the contract
+    /// address as a contributor. This integrates with the existing pro-rata
+    /// refund formula: when donors call `refund`, the recovered funds are
+    /// returned proportionally to their original contributions.
+    ///
+    /// * `verifier` — the verifier whose bond is being slashed.
+    /// * `campaign_id` — the campaign affected by the fraud.
+    /// * `slash_amount` — tokens to slash. Must be <= bond.remaining.
+    pub fn slash_verifier(
+        env: Env,
+        verifier: Address,
+        campaign_id: u64,
+        slash_amount: i128,
+    ) -> Result<(), Error> {
+        storage::admin(&env).require_auth();
+
+        if slash_amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let mut bond = storage::verifier_bond(&env, &verifier).ok_or(Error::BondNotFound)?;
+
+        if bond.status == BondStatus::Withdrawn {
+            return Err(Error::BondNotWithdrawable);
+        }
+        if slash_amount > bond.remaining {
+            return Err(Error::SlashExceedsBond);
+        }
+
+        bond.remaining -= slash_amount;
+        if bond.remaining == 0 {
+            bond.status = BondStatus::Slashed;
+        }
+        storage::save_verifier_bond(&env, &bond);
+
+        // Distribute slashed funds to the campaign's donors via the refund
+        // mechanism. We add the slashed amount to campaign.raised and record
+        // it as a contribution from the contract address so the refund formula
+        // distributes it pro-rata when donors call refund.
+        //
+        // Note: The campaign may be in any state (including completed or
+        // cancelled). If it is completed, the slashed funds are held by the
+        // contract until the admin manually arranges distribution (a known
+        // limitation). For cancelled or expired campaigns, donors can
+        // immediately call refund to receive their share.
+        let campaign_result = storage::campaign(&env, campaign_id);
+        if let Ok(mut campaign) = campaign_result {
+            let contract_addr = env.current_contract_address();
+            let prev = storage::contribution(&env, campaign_id, &contract_addr);
+            // Add to raised so the refund formula treats it as recoverable funds.
+            campaign.raised = campaign
+                .raised
+                .checked_add(slash_amount)
+                .unwrap_or(campaign.raised);
+            storage::save_campaign(&env, &campaign);
+            storage::set_contribution(
+                &env,
+                campaign_id,
+                &contract_addr,
+                prev + slash_amount,
+            );
+        }
+        // If the campaign is not found, the tokens remain in the contract.
+        // This is a known edge case; a future improvement should track them.
+
+        BondSlashed {
+            verifier: verifier.clone(),
+            campaign_id,
+            slashed_amount: slash_amount,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    // Views for bond state
+
+    pub fn get_verifier_bond(env: Env, verifier: Address) -> Option<VerifierBond> {
+        storage::verifier_bond(&env, &verifier)
+    }
+
+    pub fn bond_requirement(env: Env) -> i128 {
+        storage::bond_requirement(&env)
+    }
+
+    pub fn bond_withdraw_delay(env: Env) -> u64 {
+        storage::bond_withdraw_delay(&env)
+    }
+
+    // ─── Campaigns ────────────────────────────────────────────────────────────
 
     pub fn create_campaign(
         env: Env,
@@ -166,35 +414,12 @@ impl Aidline {
         }
         .publish(&env);
 
-        // ── Issue #27: apply sponsor matching after recording the donation ──
-        // We iterate over the sponsor's pool keyed by (campaign_id, sponsor).
-        // Because Soroban storage does not support prefix-scanning we rely on
-        // the sponsor having called `deposit_sponsor_pool` before donating.
-        // The matching is a best-effort, single-pool approach: the contract
-        // attempts to match for every pool the sponsor registered. In this
-        // MVP we apply matching for the donation's full amount against the
-        // first available pool. A future improvement can iterate all pools.
-        // NOTE: sponsors register their own pool via `deposit_sponsor_pool`
-        // and the matching is triggered here automatically.
-        // Because we cannot enumerate all sponsors we instead expose
-        // `apply_matching` as a separate call that anyone can invoke after a
-        // donation; see design notes in docs/ARCHITECTURE.md.
         Ok(())
     }
 
-    // ─── Issue #27: Sponsor matching ────────────────────────────────────────
+    // ─── Issue #27: Sponsor matching ─────────────────────────────────────────
 
     /// A sponsor deposits a matching pool for a campaign.
-    ///
-    /// * `ratio_bps` – matching ratio in basis points (100 bps = 1 %).
-    ///   Must be between 1 and 10 000 (inclusive).
-    /// * `cap` – maximum total amount the sponsor will match across all
-    ///   donations. Must be > 0 and ≤ `amount`.
-    /// * `amount` – tokens the sponsor transfers into the pool right now.
-    ///   Must equal `cap` (the full pool is deposited up front).
-    ///
-    /// Each sponsor may have at most one pool per campaign. Call
-    /// `return_sponsor_pool` to reclaim remaining funds and close the pool.
     pub fn deposit_sponsor_pool(
         env: Env,
         sponsor: Address,
@@ -205,29 +430,23 @@ impl Aidline {
     ) -> Result<(), Error> {
         sponsor.require_auth();
 
-        // Validate configuration
         if ratio_bps == 0 || ratio_bps > MAX_RATIO_BPS {
             return Err(Error::InvalidMatchingConfig);
         }
         if cap <= 0 || amount <= 0 {
             return Err(Error::InvalidMatchingConfig);
         }
-        // The deposited amount must exactly equal the cap so accounting is
-        // always exact — sponsors cannot partially fund a pool.
         if amount != cap {
             return Err(Error::InvalidMatchingConfig);
         }
 
-        // Campaign must exist and be active
         let campaign = storage::campaign(&env, campaign_id)?;
         Self::ensure_open(&env, &campaign)?;
 
-        // One pool per sponsor per campaign
         if storage::sponsor_pool(&env, campaign_id, &sponsor).is_some() {
             return Err(Error::SponsorPoolExists);
         }
 
-        // Transfer tokens from sponsor to contract
         token::Client::new(&env, &storage::token(&env)).transfer(
             &sponsor,
             &env.current_contract_address(),
@@ -258,24 +477,6 @@ impl Aidline {
     }
 
     /// Apply matching from a sponsor pool to a specific donation amount.
-    ///
-    /// This function is separate from `donate` because Soroban storage does
-    /// not support prefix-scanning, so we cannot automatically discover all
-    /// sponsor pools for a campaign inside `donate`. Instead, anyone (the
-    /// donor, the sponsor, a keeper) may call this after a donation to credit
-    /// the matched amount to the campaign.
-    ///
-    /// `donation_amount` is the gross donation to match against (must be > 0).
-    /// The matched amount is constrained by:
-    ///   1. `ratio_bps / 10_000 * donation_amount` (the configured ratio)
-    ///   2. `pool.remaining` (pool cannot be overdrafted)
-    ///   3. `pool.cap - pool.matched` (cap cannot be exceeded)
-    ///   4. `campaign.goal - campaign.raised` (campaign cannot be overfunded)
-    ///
-    /// The matched tokens are already held by the contract (deposited in
-    /// `deposit_sponsor_pool`), so no further token transfer is needed — the
-    /// contract simply adds `matched_amount` to `campaign.raised` and records
-    /// the sponsor's contribution so they share in any pro-rata refund.
     pub fn apply_matching(
         env: Env,
         sponsor: Address,
@@ -293,22 +494,17 @@ impl Aidline {
         let mut campaign = storage::campaign(&env, campaign_id)?;
         Self::ensure_open(&env, &campaign)?;
 
-        // Compute the raw match according to the ratio (no overflow: both are i128)
         let raw_match = donation_amount
             .checked_mul(pool.ratio_bps as i128)
             .ok_or(Error::InvalidAmount)?
             / 10_000_i128;
 
         if raw_match <= 0 {
-            // Donation too small to generate any match at this ratio — not an error
             return Ok(0);
         }
 
-        // Cap 1: sponsor cap
         let cap_remaining = pool.cap - pool.matched;
-        // Cap 2: pool remaining
         let pool_limit = pool.remaining;
-        // Cap 3: campaign headroom
         let campaign_headroom = campaign.goal - campaign.raised;
 
         let matched_amount = raw_match
@@ -317,17 +513,13 @@ impl Aidline {
             .min(campaign_headroom);
 
         if matched_amount <= 0 {
-            // Pool exhausted or campaign full — not an error, just no match
             return Ok(0);
         }
 
-        // Update pool accounting
         pool.remaining -= matched_amount;
         pool.matched += matched_amount;
         storage::save_sponsor_pool(&env, &pool);
 
-        // Credit matching into campaign raised amount and record the sponsor's
-        // contribution so they are included in pro-rata refund calculations.
         campaign.raised += matched_amount;
         storage::save_campaign(&env, &campaign);
 
@@ -347,10 +539,6 @@ impl Aidline {
     }
 
     /// Returns the sponsor's unused pool balance after the campaign ends.
-    ///
-    /// Can be called once the campaign is either Completed, Cancelled, or
-    /// past its deadline. The remaining pool tokens are transferred back to
-    /// the sponsor and the pool record is removed.
     pub fn return_sponsor_pool(
         env: Env,
         sponsor: Address,
@@ -363,8 +551,6 @@ impl Aidline {
 
         let campaign = storage::campaign(&env, campaign_id)?;
 
-        // Allow return only when the campaign can no longer match (i.e. it is
-        // over). A campaign is "over" when cancelled, completed, or expired.
         let expired = campaign.status == CampaignStatus::Active
             && env.ledger().timestamp() > campaign.deadline;
         let ended = campaign.status != CampaignStatus::Active || expired;
@@ -394,8 +580,6 @@ impl Aidline {
     }
 
     /// Called by the campaign's verifier once the next milestone is done.
-    /// Pays that milestone to the beneficiary. `proof_uri` points at the
-    /// evidence (photos, receipts, reports) and is emitted for indexers.
     pub fn approve_milestone(env: Env, campaign_id: u64, proof_uri: String) -> Result<i128, Error> {
         let mut campaign = storage::campaign(&env, campaign_id)?;
         campaign.verifier.require_auth();
@@ -437,7 +621,6 @@ impl Aidline {
     }
 
     /// Stops a campaign early so donors can reclaim unreleased funds.
-    /// Allowed for the creator or the admin.
     pub fn cancel_campaign(env: Env, caller: Address, campaign_id: u64) -> Result<(), Error> {
         caller.require_auth();
         let mut campaign = storage::campaign(&env, campaign_id)?;
@@ -456,11 +639,6 @@ impl Aidline {
     }
 
     /// Returns the donor's pro rata share of funds that were never released.
-    /// Available once a campaign is cancelled, or has passed its deadline
-    /// without completing.
-    ///
-    /// Note: sponsor contributions are tracked as `Contribution` entries so
-    /// sponsors share in refunds proportionally to their matched amount.
     pub fn refund(env: Env, donor: Address, campaign_id: u64) -> Result<i128, Error> {
         donor.require_auth();
         let campaign = storage::campaign(&env, campaign_id)?;
@@ -475,8 +653,6 @@ impl Aidline {
         if contributed == 0 {
             return Err(Error::NothingToRefund);
         }
-        // `raised` and `released` are frozen once refunds open, so every donor
-        // is measured against the same pool.
         let unreleased = campaign.raised - campaign.released;
         let amount = contributed * unreleased / campaign.raised;
 
@@ -498,7 +674,7 @@ impl Aidline {
         Ok(amount)
     }
 
-    // Views
+    // ─── Views ────────────────────────────────────────────────────────────────
 
     pub fn get_campaign(env: Env, campaign_id: u64) -> Result<Campaign, Error> {
         storage::campaign(&env, campaign_id)
@@ -532,7 +708,7 @@ impl Aidline {
         storage::sponsor_pool(&env, campaign_id, &sponsor)
     }
 
-    // Internal
+    // ─── Internal ─────────────────────────────────────────────────────────────
 
     fn ensure_open(env: &Env, campaign: &Campaign) -> Result<(), Error> {
         if campaign.status != CampaignStatus::Active {
