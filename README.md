@@ -117,7 +117,7 @@ scripts/       deployment helpers
 
 We welcome contributions of every size, from typo fixes to new contract features. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and look for issues labelled `good first issue`.
 
-Browse open work by complexity in [ISSUES.md](ISSUES.md): 30 scoped issues, including good first issues for newcomers.
+Browse open work by complexity in [ISSUES.md](ISSUES.md), including good first issues for newcomers.
 
 ## Security
 
