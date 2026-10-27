@@ -1,0 +1,8 @@
+# Default reviewer for everything
+*                          @sweetsoul21
+
+# Contract logic and security documents get a maintainer review
+/contracts/                @sweetsoul21
+/docs/THREAT_MODEL.md      @sweetsoul21
+/SECURITY.md               @sweetsoul21
+/.github/workflows/        @sweetsoul21
