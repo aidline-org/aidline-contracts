@@ -8,6 +8,32 @@ Thanks for helping build transparent funding for disaster relief and climate act
 - Every issue lists acceptance criteria and the files you will likely touch. If anything is unclear, ask in the issue before starting.
 - Comment on an issue to get it assigned before you begin, so two people do not build the same thing.
 
+## Working on a Stellar Wave issue
+
+Issues labelled `Stellar Wave` are part of the [Stellar Wave program on Drips](https://docs.drips.network/wave/). Contributors earn points for resolved issues and share the Wave reward pool in proportion to their points.
+
+| Complexity | Label                | Points |
+| ---------- | -------------------- | ------ |
+| Trivial    | `complexity: trivial` | 100    |
+| Medium     | `complexity: medium`  | 150    |
+| High       | `complexity: high`    | 200    |
+
+How it works:
+
+1. Pick an open issue and comment to ask for it. A maintainer assigns it to you. Please take one issue at a time and check nobody else is already assigned.
+2. Read the acceptance criteria. Every box needs to be true for the issue to count as resolved.
+3. Open a pull request that links the issue with `Closes #123`. Keep it focused on that one issue.
+4. Respond to review comments. A maintainer merges the pull request and marks the issue resolved, which awards the points.
+
+Quality matters more than speed. Pull requests are reviewed for understanding, not just for passing checks:
+
+- Write and run the tests for your change. Do not submit code you have not run or cannot explain.
+- Do not open pull requests that only fix typos or reformat files to collect points.
+- If you use an AI assistant, you are still responsible for every line. Pull requests that look untested or not understood will be closed.
+- Do not claim several issues at once or comment on assigned issues asking to be reassigned.
+
+See the Drips [Terms and rules](https://docs.drips.network/wave/terms-and-rules/) for the full conduct rules.
+
 ## Local setup
 
 ```sh
