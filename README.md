@@ -4,6 +4,8 @@
 
 # Aidline Contracts
 
+[![CI](https://github.com/aidline-org/aidline-contracts/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aidline-org/aidline-contracts/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Live demo:** [aidline-frontend.vercel.app](https://aidline-frontend.vercel.app) · **API:** [aidline-api.onrender.com](https://aidline-api.onrender.com/stats) · Stellar testnet
 
 Soroban smart contracts for **Aidline**, where diaspora communities fund disaster relief and climate work back home, with proof it landed.
@@ -39,7 +41,12 @@ This repo is one of three:
 5. When every milestone is paid, the campaign is `Completed`.
 6. If the campaign is cancelled or passes its deadline first, each donor can call `refund` to get back their share of whatever was never released.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for storage layout, events, and design decisions.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for storage layout, events, and design decisions. More documentation:
+
+- [Threat model](docs/THREAT_MODEL.md): what each role can and cannot do, and which risks are still open
+- [Deployment](docs/DEPLOYMENT.md): build, deploy to testnet, mainnet checklist
+- [Decision records](docs/adr/README.md): why the contract is built the way it is
+- [Roadmap](ROADMAP.md)
 
 ## Contract interface
 
