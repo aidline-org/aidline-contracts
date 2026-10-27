@@ -760,3 +760,457 @@ fn new_verifier_can_approve_after_reassignment() {
     assert_eq!(released, 300);
     assert_eq!(s.client.get_campaign(&id).verifier, new_v);
 }
+
+// ─── Verifier bonds (issue #29) ───────────────────────────────────────────────
+
+use crate::BondStatus;
+
+impl Setup<'_> {
+    /// A fresh address holding `balance` tokens that has posted a bond of `bond`.
+    fn bonded_verifier(&self, balance: i128, bond: i128) -> Address {
+        let v = self.donor(balance);
+        self.client.register_with_bond(&v, &bond);
+        v
+    }
+}
+
+#[test]
+fn bond_below_requirement_is_rejected() {
+    let s = Setup::new();
+    s.client.set_bond_requirement(&500);
+    let v = s.donor(1_000);
+    assert_eq!(
+        s.client.try_register_with_bond(&v, &499),
+        Err(Ok(Error::BondRequired))
+    );
+    assert!(!s.client.is_verifier(&v));
+    assert_eq!(s.token.balance(&v), 1_000);
+}
+
+#[test]
+fn zero_bond_is_rejected_even_when_no_bond_is_required() {
+    let s = Setup::new();
+    let v = s.donor(1_000);
+    assert_eq!(
+        s.client.try_register_with_bond(&v, &0),
+        Err(Ok(Error::BondRequired))
+    );
+}
+
+#[test]
+fn negative_bond_requirement_is_rejected() {
+    let s = Setup::new();
+    assert_eq!(
+        s.client.try_set_bond_requirement(&-1),
+        Err(Ok(Error::InvalidAmount))
+    );
+}
+
+#[test]
+fn posting_a_bond_registers_the_verifier_and_escrows_the_tokens() {
+    let s = Setup::new();
+    s.client.set_bond_requirement(&500);
+    let v = s.bonded_verifier(1_000, 600);
+
+    assert!(s.client.is_verifier(&v));
+    assert_eq!(s.token.balance(&v), 400);
+    assert_eq!(s.token.balance(&s.client.address), 600);
+
+    let bond = s.client.get_verifier_bond(&v).unwrap();
+    assert_eq!(bond.amount, 600);
+    assert_eq!(bond.remaining, 600);
+    assert_eq!(bond.status, BondStatus::Active);
+}
+
+#[test]
+fn an_already_registered_verifier_cannot_post_a_bond() {
+    let s = Setup::new();
+    assert_eq!(
+        s.client.try_register_with_bond(&s.verifier, &100),
+        Err(Ok(Error::Unauthorized))
+    );
+}
+
+#[test]
+fn only_the_verifier_or_admin_can_deregister() {
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 100);
+    let stranger = Address::generate(&s.env);
+    assert_eq!(
+        s.client.try_deregister_verifier(&stranger, &v),
+        Err(Ok(Error::Unauthorized))
+    );
+    s.client.deregister_verifier(&s.admin, &v);
+    assert!(!s.client.is_verifier(&v));
+}
+
+#[test]
+fn deregistering_an_unregistered_address_fails() {
+    let s = Setup::new();
+    let nobody = Address::generate(&s.env);
+    assert_eq!(
+        s.client.try_deregister_verifier(&nobody, &nobody),
+        Err(Ok(Error::NotVerifier))
+    );
+}
+
+#[test]
+fn withdrawing_without_a_bond_fails() {
+    let s = Setup::new();
+    let nobody = Address::generate(&s.env);
+    assert_eq!(
+        s.client.try_withdraw_bond(&nobody),
+        Err(Ok(Error::BondNotFound))
+    );
+}
+
+#[test]
+fn an_active_bond_cannot_be_withdrawn() {
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 100);
+    assert_eq!(
+        s.client.try_withdraw_bond(&v),
+        Err(Ok(Error::BondNotWithdrawable))
+    );
+}
+
+#[test]
+fn bond_withdrawal_waits_for_the_delay() {
+    let s = Setup::new();
+    s.client.set_bond_withdraw_delay(&(7 * DAY));
+    let v = s.bonded_verifier(1_000, 100);
+    s.client.deregister_verifier(&v, &v);
+
+    assert_eq!(
+        s.client.try_withdraw_bond(&v),
+        Err(Ok(Error::WithdrawDelayNotMet))
+    );
+
+    let now = s.env.ledger().timestamp();
+    s.env.ledger().set_timestamp(now + 7 * DAY - 1);
+    assert_eq!(
+        s.client.try_withdraw_bond(&v),
+        Err(Ok(Error::WithdrawDelayNotMet))
+    );
+
+    s.env.ledger().set_timestamp(now + 7 * DAY);
+    assert_eq!(s.client.withdraw_bond(&v), 100);
+    assert_eq!(s.token.balance(&v), 1_000);
+    assert_eq!(s.token.balance(&s.client.address), 0);
+    assert_eq!(
+        s.client.get_verifier_bond(&v).unwrap().status,
+        BondStatus::Withdrawn
+    );
+}
+
+#[test]
+fn a_bond_cannot_be_withdrawn_twice() {
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 100);
+    s.client.deregister_verifier(&v, &v);
+    s.client.withdraw_bond(&v);
+    assert_eq!(
+        s.client.try_withdraw_bond(&v),
+        Err(Ok(Error::BondNotWithdrawable))
+    );
+}
+
+#[test]
+fn slashing_moves_the_bond_into_the_campaign_for_donors() {
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 400);
+    let id = s.campaign();
+
+    s.client.slash_verifier(&v, &id, &150);
+
+    let bond = s.client.get_verifier_bond(&v).unwrap();
+    assert_eq!(bond.remaining, 250);
+    assert_eq!(bond.status, BondStatus::Active);
+    assert_eq!(s.client.get_campaign(&id).raised, 150);
+}
+
+#[test]
+fn slashing_the_whole_bond_marks_it_slashed() {
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 400);
+    let id = s.campaign();
+    s.client.slash_verifier(&v, &id, &400);
+    assert_eq!(
+        s.client.get_verifier_bond(&v).unwrap().status,
+        BondStatus::Slashed
+    );
+}
+
+#[test]
+fn slash_validates_its_arguments() {
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 400);
+    let id = s.campaign();
+    let nobody = Address::generate(&s.env);
+
+    assert_eq!(
+        s.client.try_slash_verifier(&v, &id, &0),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(
+        s.client.try_slash_verifier(&nobody, &id, &10),
+        Err(Ok(Error::BondNotFound))
+    );
+    assert_eq!(
+        s.client.try_slash_verifier(&v, &id, &401),
+        Err(Ok(Error::SlashExceedsBond))
+    );
+}
+
+#[test]
+fn a_withdrawn_bond_cannot_be_slashed() {
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 400);
+    let id = s.campaign();
+    s.client.deregister_verifier(&v, &v);
+    s.client.withdraw_bond(&v);
+    assert_eq!(
+        s.client.try_slash_verifier(&v, &id, &10),
+        Err(Ok(Error::BondNotWithdrawable))
+    );
+}
+
+// ─── Sponsor matching pools (issue #27) ───────────────────────────────────────
+
+#[test]
+fn pool_config_is_validated() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+
+    for (ratio, cap, amount) in [
+        (0, 500, 500),
+        (10_001, 500, 500),
+        (5_000, 0, 0),
+        (5_000, 500, 400),
+        (5_000, -5, -5),
+    ] {
+        assert_eq!(
+            s.client
+                .try_deposit_sponsor_pool(&sponsor, &id, &ratio, &cap, &amount),
+            Err(Ok(Error::InvalidMatchingConfig)),
+            "ratio {ratio}, cap {cap}, amount {amount}"
+        );
+    }
+    assert_eq!(s.token.balance(&sponsor), 10_000);
+}
+
+#[test]
+fn pool_needs_an_open_campaign() {
+    let s = Setup::new();
+    let sponsor = s.donor(10_000);
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &9, &5_000, &500, &500),
+        Err(Ok(Error::CampaignNotFound))
+    );
+
+    let id = s.campaign();
+    s.pass_deadline();
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &id, &5_000, &500, &500),
+        Err(Ok(Error::CampaignExpired))
+    );
+}
+
+#[test]
+fn a_sponsor_can_only_open_one_pool_per_campaign() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5_000, &500, &500);
+    assert_eq!(
+        s.client
+            .try_deposit_sponsor_pool(&sponsor, &id, &5_000, &500, &500),
+        Err(Ok(Error::SponsorPoolExists))
+    );
+    assert_eq!(s.token.balance(&sponsor), 9_500);
+}
+
+#[test]
+fn matching_credits_the_campaign_at_the_pool_ratio() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    let donor = s.donor(1_000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5_000, &500, &500);
+
+    s.client.donate(&donor, &id, &200);
+    assert_eq!(s.client.apply_matching(&sponsor, &id, &donor, &200), 100);
+
+    assert_eq!(s.client.get_campaign(&id).raised, 300);
+    let pool = s.client.get_sponsor_pool(&id, &sponsor).unwrap();
+    assert_eq!(pool.matched, 100);
+    assert_eq!(pool.remaining, 400);
+}
+
+#[test]
+fn matching_stops_at_the_pool_cap() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    let donor = s.donor(1_000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &10_000, &150, &150);
+
+    s.client.donate(&donor, &id, &400);
+    assert_eq!(s.client.apply_matching(&sponsor, &id, &donor, &400), 150);
+    assert_eq!(s.client.apply_matching(&sponsor, &id, &donor, &400), 0);
+}
+
+#[test]
+fn matching_never_pushes_a_campaign_past_its_goal() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    let donor = s.donor(2_000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &10_000, &1_000, &1_000);
+
+    s.client.donate(&donor, &id, &900);
+    assert_eq!(s.client.apply_matching(&sponsor, &id, &donor, &900), 100);
+    assert_eq!(s.client.get_campaign(&id).raised, 1_000);
+}
+
+#[test]
+fn matching_a_tiny_donation_rounds_to_nothing() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    let donor = s.donor(100);
+    s.client.deposit_sponsor_pool(&sponsor, &id, &1, &500, &500);
+    assert_eq!(s.client.apply_matching(&sponsor, &id, &donor, &1), 0);
+}
+
+#[test]
+fn matching_validates_amount_and_pool() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    let donor = s.donor(100);
+
+    assert_eq!(
+        s.client.try_apply_matching(&sponsor, &id, &donor, &0),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(
+        s.client.try_apply_matching(&sponsor, &id, &donor, &10),
+        Err(Ok(Error::SponsorPoolNotFound))
+    );
+}
+
+#[test]
+fn pool_cannot_be_returned_while_the_campaign_is_open() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5_000, &500, &500);
+    assert_eq!(
+        s.client.try_return_sponsor_pool(&sponsor, &id),
+        Err(Ok(Error::PoolNotReturnable))
+    );
+}
+
+#[test]
+fn unmatched_pool_balance_returns_to_the_sponsor_after_the_deadline() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let sponsor = s.donor(10_000);
+    let donor = s.donor(1_000);
+    s.client
+        .deposit_sponsor_pool(&sponsor, &id, &5_000, &500, &500);
+    s.client.donate(&donor, &id, &200);
+    s.client.apply_matching(&sponsor, &id, &donor, &200);
+
+    s.pass_deadline();
+    assert_eq!(s.client.return_sponsor_pool(&sponsor, &id), 400);
+    assert_eq!(s.token.balance(&sponsor), 9_900);
+    assert!(s.client.get_sponsor_pool(&id, &sponsor).is_none());
+    assert_eq!(
+        s.client.try_return_sponsor_pool(&sponsor, &id),
+        Err(Ok(Error::SponsorPoolNotFound))
+    );
+}
+
+// ─── Pledges (issue #30) ──────────────────────────────────────────────────────
+
+#[test]
+fn pledge_amount_must_be_positive() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let donor = s.donor(1_000);
+    assert_eq!(
+        s.client.try_create_pledge(&donor, &id, &0),
+        Err(Ok(Error::InvalidPledge))
+    );
+    assert_eq!(
+        s.client.try_create_pledge(&donor, &id, &-5),
+        Err(Ok(Error::InvalidPledge))
+    );
+}
+
+#[test]
+fn pledge_needs_enough_allowance() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let donor = s.donor(1_000);
+    assert_eq!(
+        s.client.try_create_pledge(&donor, &id, &300),
+        Err(Ok(Error::InvalidPledge))
+    );
+
+    let expiry = s.env.ledger().sequence() + 1_000;
+    s.token.approve(&donor, &s.client.address, &299, &expiry);
+    assert_eq!(
+        s.client.try_create_pledge(&donor, &id, &300),
+        Err(Ok(Error::InvalidPledge))
+    );
+}
+
+#[test]
+fn pledge_needs_an_open_campaign() {
+    let s = Setup::new();
+    let donor = s.donor(1_000);
+    assert_eq!(
+        s.client.try_create_pledge(&donor, &7, &100),
+        Err(Ok(Error::CampaignNotFound))
+    );
+    let id = s.campaign();
+    s.pass_deadline();
+    assert_eq!(
+        s.client.try_create_pledge(&donor, &id, &100),
+        Err(Ok(Error::CampaignExpired))
+    );
+}
+
+#[test]
+fn a_pledge_moves_no_money_until_a_milestone_is_approved() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let donor = s.donor(1_000);
+    let expiry = s.env.ledger().sequence() + 1_000;
+    s.token.approve(&donor, &s.client.address, &300, &expiry);
+
+    let pledge_id = s.client.create_pledge(&donor, &id, &300);
+    assert_eq!(s.token.balance(&donor), 1_000);
+    assert_eq!(s.client.get_campaign(&id).raised, 0);
+    let pledge = s.client.get_pledge(&pledge_id).unwrap();
+    assert_eq!(pledge.pledged_amount, 300);
+    assert_eq!(pledge.pulled_amount, 0);
+    assert!(pledge.active);
+
+    s.client.approve_milestone(&id, &s.proof());
+
+    assert_eq!(s.token.balance(&donor), 700);
+    assert_eq!(s.token.balance(&s.beneficiary), 300);
+    assert_eq!(s.client.get_pledge(&pledge_id).unwrap().pulled_amount, 300);
+}
