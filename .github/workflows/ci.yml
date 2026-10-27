@@ -43,7 +43,11 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Audit dependencies
-        run: cargo audit
+        # RUSTSEC-2026-0387 (crypto-bigint 0.5.5) is reached only through soroban-env-host,
+        # the native host used by tests. It is not in the wasm32 contract (checked with
+        # `cargo tree --target wasm32v1-none`) and the fix has to come from soroban-sdk.
+        # Remove this flag once soroban-sdk moves to crypto-bigint 0.7.6 or later.
+        run: cargo audit --ignore RUSTSEC-2026-0387
 
   fuzz:
     # Run a short bounded fuzz session in CI (Issue #28).
