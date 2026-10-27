@@ -31,6 +31,20 @@ jobs:
       - name: Build WASM
         run: stellar contract build
 
+  audit:
+    # Fails the build when a dependency has a published security advisory.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: audit
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit dependencies
+        run: cargo audit
+
   fuzz:
     # Run a short bounded fuzz session in CI (Issue #28).
     # The job uses a nightly toolchain and cargo-fuzz.

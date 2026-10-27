@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Tests for verifier bonds, sponsor matching pools and pledges, covering every error those features can return (34 new tests)
+- Dependency audit job in CI (`cargo audit`)
 - Emergency fast track: a partial first tranche for Emergency campaigns (#23, @oladayo2222)
 - Per milestone due dates with partial refunds when a milestone is overdue (#26, @oladayo2222)
 - Sponsor matching pools that match donations up to a cap (#27, @Feyisara2108)
