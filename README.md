@@ -126,5 +126,3 @@ This code has not been audited yet. Please do not use it with real funds on main
 ## License
 
 [MIT](LICENSE)
-
-# Test coverage confirmation - 2026-10-27
