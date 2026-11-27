@@ -343,7 +343,7 @@ fn removed_verifier_cannot_approve() {
     let id = s.campaign();
     let donor = s.donor(1000);
     s.client.donate(&donor, &id, &1000);
-    s.client.remove_verifier(&s.verifier);
+    s.client.remove_verifier(&s.admin, &s.verifier);
 
     assert_eq!(
         s.client.try_approve_milestone(&id, &s.proof()),
@@ -437,4 +437,80 @@ fn refund_pro_rata_overflow_returns_invalid_amount() {
     // MIN_DONATION_AMOUNT * (donor1_amount + MIN_DONATION_AMOUNT) does not overflow -> succeeds
     let refunded2 = s.client.refund(&donor2, &id);
     assert_eq!(refunded2, MIN_DONATION_AMOUNT);
+}
+
+// ─── Issue #169: Unfunded campaign cancellation & storage cleanup ────────────
+
+#[test]
+fn creator_can_cancel_unfunded_campaign_and_clean_up_storage() {
+    use crate::types::DataKey;
+
+    let s = Setup::new();
+    let v = s.bonded_verifier(1_000, 200);
+    let now = s.env.ledger().timestamp();
+    let due_dates = vec![&s.env, now + 10 * DAY, now + 20 * DAY];
+    let milestones = vec![&s.env, 300, 700];
+
+    let id = s.client.create_campaign_with_due_dates(
+        &s.creator,
+        &s.beneficiary,
+        &v,
+        &s.token.address,
+        &CampaignKind::Climate,
+        &String::from_str(&s.env, "ipfs://mistake"),
+        &(now + 30 * DAY),
+        &milestones,
+        &due_dates,
+    );
+    assert_eq!(s.client.milestone_due_dates(&id), due_dates);
+
+    // Creator cancels immediately with raised == 0
+    s.client.cancel_campaign(&s.creator, &id);
+    assert!(!s.env.events().all().events().is_empty());
+
+    let c = s.client.get_campaign(&id);
+    assert_eq!(c.status, CampaignStatus::Cancelled);
+    assert_eq!(c.raised, 0);
+
+    // Orphaned milestone due date and auxiliary records are removed
+    assert!(s.client.milestone_due_dates(&id).is_empty());
+    let (has_due_dates, has_start) = s.env.as_contract(&s.client.address, || {
+        (
+            s.env
+                .storage()
+                .persistent()
+                .has(&DataKey::MilestoneDueDates(id)),
+            s.env
+                .storage()
+                .persistent()
+                .has(&DataKey::CampaignStart(id)),
+        )
+    });
+    assert!(!has_due_dates);
+    assert!(!has_start);
+
+    // No refunds can be claimed
+    let stranger = Address::generate(&s.env);
+    assert_eq!(s.client.refundable_amount(&id, &stranger), 0);
+    assert_eq!(
+        s.client.try_refund(&stranger, &id),
+        Err(Ok(Error::NothingToRefund))
+    );
+
+    // Verifier assignment was closed so they can deregister and withdraw bond
+    s.client.deregister_verifier(&v, &v);
+    assert_eq!(s.client.withdraw_bond(&v), 200);
+}
+
+#[test]
+fn cancelling_funded_campaign_uses_standard_refund_flow() {
+    let s = Setup::new();
+    let id = s.campaign();
+    let donor = s.donor(500);
+    s.client.donate(&donor, &id, &500);
+
+    s.client.cancel_campaign(&s.creator, &id);
+    assert_eq!(s.client.get_campaign(&id).status, CampaignStatus::Cancelled);
+    assert_eq!(s.client.refundable_amount(&id, &donor), 500);
+    assert_eq!(s.client.refund(&donor, &id), 500);
 }

@@ -214,7 +214,7 @@ stellar contract invoke \
 
 ### `add_verifier`
 
-Called by the admin to register a trusted verifier without requiring a bond.
+Called by the admin or a `VerifierManager` role holder to register a trusted verifier without requiring a bond.
 
 ```sh
 stellar contract invoke \
@@ -222,12 +222,13 @@ stellar contract invoke \
   --source deployer \
   --network testnet \
   -- add_verifier \
+  --caller $(stellar keys address deployer) \
   --verifier $(stellar keys address verifier1)
 ```
 
 ### `remove_verifier`
 
-Called by the admin to deregister a verifier and freeze their approvals.
+Called by the admin or a `VerifierManager` role holder to deregister a verifier and freeze their approvals.
 
 ```sh
 stellar contract invoke \
@@ -235,6 +236,7 @@ stellar contract invoke \
   --source deployer \
   --network testnet \
   -- remove_verifier \
+  --caller $(stellar keys address deployer) \
   --verifier $(stellar keys address verifier1)
 ```
 
@@ -321,7 +323,7 @@ stellar contract invoke \
 
 ### `slash_verifier`
 
-Called by the admin to slash a bonded verifier's deposit for misconduct, routing slashed funds into the specified campaign escrow.
+Called by the admin or a `Slasher` role holder to slash a bonded verifier's deposit for misconduct, routing slashed funds into the specified campaign escrow.
 
 ```sh
 stellar contract invoke \
@@ -329,6 +331,7 @@ stellar contract invoke \
   --source deployer \
   --network testnet \
   -- slash_verifier \
+  --caller $(stellar keys address deployer) \
   --verifier $(stellar keys address verifier1) \
   --campaign_id 0 \
   --slash_amount 500000000

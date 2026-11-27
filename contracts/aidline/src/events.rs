@@ -2,7 +2,7 @@
 
 use soroban_sdk::{Address, BytesN, Env, String, symbol_short};
 
-use crate::types::CampaignKind;
+use crate::types::{CampaignKind, Role};
 
 pub struct CampaignCreated {
     pub campaign_id: u64,
@@ -785,6 +785,34 @@ impl TreasuryUpdated {
     pub fn publish(&self, env: &Env) {
         env.events()
             .publish((symbol_short!("tres_upd"),), self.treasury.clone());
+    }
+}
+
+// ─── Issue #178: RBAC events ──────────────────────────────────────────────────
+
+pub struct RoleGranted {
+    pub role: Role,
+    pub account: Address,
+}
+
+impl RoleGranted {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish(
+            (symbol_short!("role_grnt"), self.role),
+            self.account.clone(),
+        );
+    }
+}
+
+pub struct RoleRevoked {
+    pub role: Role,
+    pub account: Address,
+}
+
+impl RoleRevoked {
+    pub fn publish(&self, env: &Env) {
+        env.events()
+            .publish((symbol_short!("role_rvk"), self.role), self.account.clone());
     }
 }
 

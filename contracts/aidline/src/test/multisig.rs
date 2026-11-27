@@ -8,8 +8,8 @@ fn multisig_campaign_creation_validation() {
     let v1 = s.verifier.clone();
     let v2 = Address::generate(&s.env);
     let v3 = Address::generate(&s.env);
-    s.client.add_verifier(&v2);
-    s.client.add_verifier(&v3);
+    s.client.add_verifier(&s.admin, &v2);
+    s.client.add_verifier(&s.admin, &v3);
 
     let verifiers = vec![&s.env, v1.clone(), v2.clone(), v3.clone()];
     let milestones = vec![&s.env, 500, 500];
@@ -114,8 +114,8 @@ fn multisig_milestone_release_requires_threshold() {
     let v1 = s.verifier.clone();
     let v2 = Address::generate(&s.env);
     let v3 = Address::generate(&s.env);
-    s.client.add_verifier(&v2);
-    s.client.add_verifier(&v3);
+    s.client.add_verifier(&s.admin, &v2);
+    s.client.add_verifier(&s.admin, &v3);
 
     let verifiers = vec![&s.env, v1.clone(), v2.clone(), v3.clone()];
     let milestones = vec![&s.env, 300, 700];
@@ -158,7 +158,7 @@ fn multisig_milestone_release_requires_threshold() {
 
     // Approval by non-assigned verifier -> rejected
     let v4 = Address::generate(&s.env);
-    s.client.add_verifier(&v4);
+    s.client.add_verifier(&s.admin, &v4);
     let non_assigned = s
         .client
         .try_approve_milestone_multisig(&id, &v4, &s.proof());
@@ -203,7 +203,7 @@ fn multisig_campaign_blocks_anonymous_approve_milestone() {
     let s = Setup::new();
     let v1 = s.verifier.clone();
     let v2 = Address::generate(&s.env);
-    s.client.add_verifier(&v2);
+    s.client.add_verifier(&s.admin, &v2);
 
     let verifiers = vec![&s.env, v1, v2];
     let milestones = vec![&s.env, 500];
@@ -227,4 +227,60 @@ fn multisig_campaign_blocks_anonymous_approve_milestone() {
     // Calling approve_milestone without specifying verifier on a multisig campaign returns Unauthorized
     let res = s.client.try_approve_milestone(&id, &s.proof());
     assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+// ─── Issue #172: Multisig milestone proof URI collection ─────────────────────
+
+#[test]
+fn multisig_collects_proof_uris_from_all_approving_verifiers() {
+    let s = Setup::new();
+    let v1 = s.verifier.clone();
+    let v2 = Address::generate(&s.env);
+    let v3 = Address::generate(&s.env);
+    s.client.add_verifier(&s.admin, &v2);
+    s.client.add_verifier(&s.admin, &v3);
+
+    let verifiers = vec![&s.env, v1.clone(), v2.clone(), v3.clone()];
+    let milestones = vec![&s.env, 400, 600];
+    let deadline = s.env.ledger().timestamp() + 30 * DAY;
+    let id = s.client.create_multisig_campaign(
+        &s.creator,
+        &s.beneficiary,
+        &verifiers,
+        &2,
+        &s.token.address,
+        &CampaignKind::Climate,
+        &String::from_str(&s.env, "ipfs://multisig-proofs"),
+        &deadline,
+        &milestones,
+    );
+
+    let donor = s.donor(1_000);
+    s.client.donate(&donor, &id, &1_000);
+
+    let proof1 = String::from_str(&s.env, "ipfs://proof-v1");
+    let proof2 = String::from_str(&s.env, "ipfs://proof-v2");
+
+    // Verifier 1 approves -> MilestoneApproved event emitted, no token transfer yet
+    assert_eq!(s.client.approve_milestone_multisig(&id, &v1, &proof1), 0);
+    assert!(!s.env.events().all().events().is_empty());
+    assert_eq!(s.token.balance(&s.beneficiary), 0);
+
+    // Duplicate approval by v1 fails and does not duplicate proof URI
+    assert_eq!(
+        s.client.try_approve_milestone_multisig(&id, &v1, &proof2),
+        Err(Ok(Error::DuplicateApproval))
+    );
+
+    // Verifier 2 approves -> milestone 0 released and tokens transferred
+    assert_eq!(s.client.approve_milestone_multisig(&id, &v2, &proof2), 400);
+    assert_eq!(s.token.balance(&s.beneficiary), 400);
+
+    let collected_proofs = s.client.get_milestone_approval_proofs(&id, &0);
+    assert_eq!(collected_proofs.len(), 2);
+    assert_eq!(collected_proofs.get(0).unwrap(), proof1);
+    assert_eq!(collected_proofs.get(1).unwrap(), proof2);
+
+    let approvers = s.client.get_milestone_approvals(&id, &0);
+    assert_eq!(approvers, vec![&s.env, v1, v2]);
 }

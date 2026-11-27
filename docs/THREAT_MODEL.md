@@ -12,7 +12,7 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) first for the roles, storage and lifecyc
 
 ## Trust assumptions
 
-- **The admin is trusted.** One address can add and remove verifiers, cancel any campaign, reassign a campaign's verifier, set bond rules and slash bonds. A compromised admin key is the largest single risk in the MVP. Moving admin rights to a multisig is on the [roadmap](../ROADMAP.md).
+- **The admin is trusted, with optional role delegation.** The primary admin can hand over admin control, manage roles (`grant_role`/`revoke_role`), pause the contract, set fees/bond parameters, and reassign verifiers. Operational verifier management (`Role::VerifierManager`) and bond slashing (`Role::Slasher`) can be delegated to separate multisig accounts or keys. A compromised primary admin key remains the largest single risk in the MVP; moving primary admin rights to a multisig is on the [roadmap](../ROADMAP.md).
 - **Verifiers are trusted per campaign, within limits.** A verifier decides whether a milestone was delivered. Bonds and slashing make a false approval costly, but a verifier can still approve work that was not done. Donors are protected only for funds not yet released.
 - **The token contract is trusted.** One token is set at deploy time. A malicious or upgradable token could break escrow, so deploy only with a well known asset such as native XLM or USDC.
 - **Soroban and the host environment behave as documented.** This includes authorization checks (`require_auth`), ledger timestamps and storage TTL rules.

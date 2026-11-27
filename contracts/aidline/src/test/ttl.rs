@@ -270,12 +270,14 @@ fn state_changing_calls_extend_the_instance_entry() {
         ("refund", &|| {
             s.client.refund(&donor2, &id2);
         }),
-        ("add_verifier", &|| s.client.add_verifier(&extra)),
+        ("add_verifier", &|| s.client.add_verifier(&s.admin, &extra)),
         ("set_verifier_profile", &|| {
             s.client
                 .set_verifier_profile(&extra, &String::from_str(&s.env, "ipfs://p"))
         }),
-        ("remove_verifier", &|| s.client.remove_verifier(&extra)),
+        ("remove_verifier", &|| {
+            s.client.remove_verifier(&s.admin, &extra)
+        }),
         ("deregister_verifier", &|| {
             s.client.deregister_verifier(&bonded, &bonded)
         }),

@@ -8,14 +8,14 @@ fn only_signed_by(s: &Setup, who: &Address, v: &Address, id: u64) -> Result<(), 
         invoke: &MockAuthInvoke {
             contract: &s.client.address,
             fn_name: "slash_verifier",
-            args: (v.clone(), id, 100i128).into_val(&s.env),
+            args: (who.clone(), v.clone(), id, 100i128).into_val(&s.env),
             sub_invokes: &[],
         },
     };
     match s
         .client
         .mock_auths(&[auth])
-        .try_slash_verifier(v, &id, &100)
+        .try_slash_verifier(who, v, &id, &100)
     {
         Ok(Ok(())) => Ok(()),
         _ => Err(()),

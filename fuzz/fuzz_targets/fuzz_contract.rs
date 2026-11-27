@@ -281,7 +281,7 @@ fuzz_target!(|data: &[u8]| {
     let client = AidlineClient::new(&env, &contract_id);
 
     let verifier = Address::generate(&env);
-    client.add_verifier(&verifier);
+    client.add_verifier(&admin, &verifier);
 
     let bonded_verifier = Address::generate(&env);
 
@@ -473,7 +473,7 @@ fuzz_target!(|data: &[u8]| {
                         .max(1)
                         .min(model.bond_remaining);
                     if client
-                        .try_slash_verifier(&bonded_verifier, &campaign_id, &slash_amount)
+                        .try_slash_verifier(&admin, &bonded_verifier, &campaign_id, &slash_amount)
                         .is_ok()
                     {
                         model.bond_remaining -= slash_amount;

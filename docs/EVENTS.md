@@ -40,6 +40,8 @@ The backend indexer and off-chain analytics listen to these events to reconstruc
 | `ContractUpgraded` | `upgraded` | `(symbol,)` | `new_wasm_hash` | `upgrade` |
 | `MetadataUpdated` | `meta_upd` | `(symbol, campaign_id)` | `new_metadata_uri` | `update_metadata` |
 | `DeadlineExtended` | `dl_ext` | `(symbol, campaign_id)` | `(old_deadline, new_deadline)` | `extend_deadline`, `extend_deadline_by` |
+| `RoleGranted` | `role_grnt` | `(symbol, role)` | `account` | `grant_role` |
+| `RoleRevoked` | `role_rvk` | `(symbol, role)` | `account` | `revoke_role` |
 
 ---
 

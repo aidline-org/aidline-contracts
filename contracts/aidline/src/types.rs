@@ -247,12 +247,21 @@ pub struct Pledge {
 }
 
 #[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Role {
+    Admin,
+    VerifierManager,
+    Slasher,
+}
+
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
     Admin,
     Token,
     CampaignCount,
     Verifier(Address),
+    Role(Role, Address),
     Campaign(u64),
     Contribution(u64, Address),
     // Issue #27: sponsor matching pools
@@ -271,6 +280,8 @@ pub enum DataKey {
     MilestoneDueDates(u64),
     // Issue #9: milestone approvals: (campaign_id, milestone_index) -> Vec<Address>
     MilestoneApprovals(u64, u32),
+    // Issue #172: milestone approval proof URIs: (campaign_id, milestone_index) -> Vec<String>
+    MilestoneApprovalProofs(u64, u32),
     // Issue #10: token allowlist
     AllowedToken(Address),
     // Emergency pause switch

@@ -199,7 +199,7 @@ fn admin_removal_moves_bond_to_pending_withdrawal() {
     s.client.set_bond_withdraw_delay(&(7 * DAY));
     let v = s.bonded_verifier(1_000, 100);
 
-    s.client.remove_verifier(&v);
+    s.client.remove_verifier(&s.admin, &v);
 
     assert!(!s.client.is_verifier(&v));
     let bond = s.client.get_verifier_bond(&v).unwrap();
@@ -343,7 +343,7 @@ fn slashing_moves_the_bond_into_the_recovery_pool_for_donors() {
     let v = s.bonded_verifier(1_000, 400);
     let id = s.campaign();
 
-    s.client.slash_verifier(&v, &id, &150);
+    s.client.slash_verifier(&s.admin, &v, &id, &150);
 
     let bond = s.client.get_verifier_bond(&v).unwrap();
     assert_eq!(bond.remaining, 250);
@@ -363,7 +363,7 @@ fn slashed_bond_is_split_pro_rata_among_refunding_donors() {
     s.client.donate(&donor_b, &id, &400);
     s.client.approve_milestone(&id, &s.proof()); // 300 released
 
-    s.client.slash_verifier(&v, &id, &200);
+    s.client.slash_verifier(&s.admin, &v, &id, &200);
     s.client.cancel_campaign(&s.creator, &id);
 
     // Pool = (1000 - 300) + 200 = 900, split 60/40.
@@ -378,7 +378,7 @@ fn slashing_the_whole_bond_marks_it_slashed() {
     let s = Setup::new();
     let v = s.bonded_verifier(1_000, 400);
     let id = s.campaign();
-    s.client.slash_verifier(&v, &id, &400);
+    s.client.slash_verifier(&s.admin, &v, &id, &400);
     assert_eq!(
         s.client.get_verifier_bond(&v).unwrap().status,
         BondStatus::Slashed
@@ -393,15 +393,15 @@ fn slash_validates_its_arguments() {
     let nobody = Address::generate(&s.env);
 
     assert_eq!(
-        s.client.try_slash_verifier(&v, &id, &0),
+        s.client.try_slash_verifier(&s.admin, &v, &id, &0),
         Err(Ok(Error::InvalidAmount))
     );
     assert_eq!(
-        s.client.try_slash_verifier(&nobody, &id, &10),
+        s.client.try_slash_verifier(&s.admin, &nobody, &id, &10),
         Err(Ok(Error::BondNotFound))
     );
     assert_eq!(
-        s.client.try_slash_verifier(&v, &id, &401),
+        s.client.try_slash_verifier(&s.admin, &v, &id, &401),
         Err(Ok(Error::SlashExceedsBond))
     );
 }
@@ -412,7 +412,7 @@ fn slash_with_unknown_campaign_fails_and_leaves_bond_untouched() {
     let v = s.bonded_verifier(1_000, 400);
 
     assert_eq!(
-        s.client.try_slash_verifier(&v, &9_999, &150),
+        s.client.try_slash_verifier(&s.admin, &v, &9_999, &150),
         Err(Ok(Error::CampaignNotFound))
     );
 
@@ -429,7 +429,7 @@ fn a_withdrawn_bond_cannot_be_slashed() {
     s.client.deregister_verifier(&v, &v);
     s.client.withdraw_bond(&v);
     assert_eq!(
-        s.client.try_slash_verifier(&v, &id, &10),
+        s.client.try_slash_verifier(&s.admin, &v, &id, &10),
         Err(Ok(Error::BondNotWithdrawable))
     );
 }
@@ -449,7 +449,7 @@ fn slashing_completed_campaign_fails_and_does_not_deduct_bond() {
     assert_eq!(s.client.get_campaign(&id).status, CampaignStatus::Completed);
 
     assert_eq!(
-        s.client.try_slash_verifier(&v, &id, &150),
+        s.client.try_slash_verifier(&s.admin, &v, &id, &150),
         Err(Ok(Error::CampaignNotActive))
     );
 
@@ -464,8 +464,46 @@ fn slashing_completed_campaign_fails_and_does_not_deduct_bond() {
         s.client.get_campaign(&id_cancelled).status,
         CampaignStatus::Cancelled
     );
-    s.client.slash_verifier(&v, &id_cancelled, &100);
+    s.client.slash_verifier(&s.admin, &v, &id_cancelled, &100);
     let bond_after = s.client.get_verifier_bond(&v).unwrap();
     assert_eq!(bond_after.remaining, 300);
     assert_eq!(s.client.slashed_recovery(&id_cancelled), 100);
+}
+
+// ─── Issue #177: Bond withdrawal delay upper bound ───────────────────────────
+
+#[test]
+fn bond_withdraw_delay_is_capped_at_90_days() {
+    let s = Setup::new();
+
+    // 0 days succeeds
+    s.client.set_bond_withdraw_delay(&0);
+    assert_eq!(s.client.bond_withdraw_delay(), 0);
+
+    // Exactly 90 days succeeds
+    let max_delay = 90 * DAY;
+    assert_eq!(max_delay, crate::MAX_BOND_WITHDRAW_DELAY);
+    s.client.set_bond_withdraw_delay(&max_delay);
+    assert_eq!(s.client.bond_withdraw_delay(), max_delay);
+
+    // 90 days + 1 second fails with InvalidAmount
+    assert_eq!(
+        s.client.try_set_bond_withdraw_delay(&(max_delay + 1)),
+        Err(Ok(Error::InvalidAmount))
+    );
+
+    // 91 days fails with InvalidAmount
+    assert_eq!(
+        s.client.try_set_bond_withdraw_delay(&(91 * DAY)),
+        Err(Ok(Error::InvalidAmount))
+    );
+
+    // u64::MAX fails with InvalidAmount
+    assert_eq!(
+        s.client.try_set_bond_withdraw_delay(&u64::MAX),
+        Err(Ok(Error::InvalidAmount))
+    );
+
+    // Stored delay remains unchanged at 90 days
+    assert_eq!(s.client.bond_withdraw_delay(), max_delay);
 }

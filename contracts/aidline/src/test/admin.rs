@@ -203,15 +203,15 @@ fn nominate_admin_and_accept_flow_works() {
         invoke: &MockAuthInvoke {
             contract: &s.client.address,
             fn_name: "add_verifier",
-            args: (extra_verifier.clone(),).into_val(&s.env),
+            args: (candidate.clone(), extra_verifier.clone()).into_val(&s.env),
             sub_invokes: &[],
         },
     };
     let res = s
         .client
         .mock_auths(&[auth_candidate_before])
-        .try_add_verifier(&extra_verifier);
-    assert_eq!(res.unwrap_err(), Err(InvokeError::Abort));
+        .try_add_verifier(&candidate, &extra_verifier);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
     assert!(!s.client.is_verifier(&extra_verifier));
 
     // Re-nominating replaces the pending candidate

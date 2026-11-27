@@ -47,7 +47,7 @@ impl<'a> Setup<'a> {
         let client = AidlineClient::new(&env, &contract_id);
 
         let verifier = Address::generate(&env);
-        client.add_verifier(&verifier);
+        client.add_verifier(&admin, &verifier);
 
         Setup {
             creator: Address::generate(&env),
@@ -172,6 +172,7 @@ mod pause;
 mod pledge_scope;
 mod pledges;
 mod property;
+mod rbac;
 mod refunds;
 mod rollover;
 mod schema;

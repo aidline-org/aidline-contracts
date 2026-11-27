@@ -275,7 +275,7 @@ fn reject_milestone_requires_verifier_auth() {
 fn reject_milestone_rejects_unregistered_verifier() {
     let s = Setup::new();
     let id = s.campaign();
-    s.client.remove_verifier(&s.verifier);
+    s.client.remove_verifier(&s.admin, &s.verifier);
 
     let details_uri = String::from_str(&s.env, "ipfs://rejection-reason");
     let res = s.client.try_reject_milestone(

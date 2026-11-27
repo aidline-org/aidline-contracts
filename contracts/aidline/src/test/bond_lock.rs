@@ -27,7 +27,7 @@ fn bond_is_locked_while_a_campaign_is_open_and_free_after_cancel() {
         Err(Ok(Error::VerifierHasActiveCampaigns))
     );
     // Still slashable while the campaign is open.
-    s.client.slash_verifier(&v, &id, &100);
+    s.client.slash_verifier(&s.admin, &v, &id, &100);
     assert_eq!(s.client.get_verifier_bond(&v).unwrap().remaining, 300);
 
     s.client.cancel_campaign(&s.creator, &id);
@@ -54,7 +54,7 @@ fn bond_is_free_once_every_campaign_completes() {
                 s.client.try_withdraw_bond(&v),
                 Err(Ok(Error::VerifierHasActiveCampaigns))
             );
-            s.client.add_verifier(&v);
+            s.client.add_verifier(&s.admin, &v);
         }
     }
     s.client.deregister_verifier(&v, &v);
@@ -69,7 +69,7 @@ fn reassigning_a_campaign_moves_the_lock_to_the_new_verifier() {
     let id = campaign_for(&s, &old);
     s.client.deregister_verifier(&old, &old);
     s.client.deregister_verifier(&new, &new);
-    s.client.add_verifier(&new);
+    s.client.add_verifier(&s.admin, &new);
 
     s.client.reassign_verifier(&id, &new);
 

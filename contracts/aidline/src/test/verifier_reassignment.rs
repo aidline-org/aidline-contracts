@@ -7,7 +7,7 @@ fn admin_can_reassign_verifier_on_active_campaign() {
     let s = Setup::new();
     let id = s.campaign();
     let new_v = Address::generate(&s.env);
-    s.client.add_verifier(&new_v);
+    s.client.add_verifier(&s.admin, &new_v);
 
     // reassign_verifier emits VerifierReassigned; events() returns events from
     // the most recent invocation, must be non-empty after the call.
@@ -38,7 +38,7 @@ fn reassign_fails_for_cancelled_campaign() {
     let s = Setup::new();
     let id = s.campaign();
     let new_v = Address::generate(&s.env);
-    s.client.add_verifier(&new_v);
+    s.client.add_verifier(&s.admin, &new_v);
 
     s.client.cancel_campaign(&s.admin, &id);
     assert_eq!(
@@ -52,7 +52,7 @@ fn reassign_fails_for_expired_campaign() {
     let s = Setup::new();
     let id = s.campaign();
     let new_v = Address::generate(&s.env);
-    s.client.add_verifier(&new_v);
+    s.client.add_verifier(&s.admin, &new_v);
 
     s.pass_deadline();
     assert_eq!(
@@ -69,9 +69,9 @@ fn new_verifier_can_approve_after_reassignment() {
     s.client.donate(&donor, &id, &1000);
 
     // Remove old verifier and reassign to a new one.
-    s.client.remove_verifier(&s.verifier);
+    s.client.remove_verifier(&s.admin, &s.verifier);
     let new_v = Address::generate(&s.env);
-    s.client.add_verifier(&new_v);
+    s.client.add_verifier(&s.admin, &new_v);
     s.client.reassign_verifier(&id, &new_v);
 
     // New verifier controls the campaign; milestone should release.
@@ -92,9 +92,9 @@ fn reassign_verifier_caps_at_maximum() {
     let v1 = Address::generate(&s.env);
     let v2 = Address::generate(&s.env);
     let v3 = Address::generate(&s.env);
-    s.client.add_verifier(&v1);
-    s.client.add_verifier(&v2);
-    s.client.add_verifier(&v3);
+    s.client.add_verifier(&s.admin, &v1);
+    s.client.add_verifier(&s.admin, &v2);
+    s.client.add_verifier(&s.admin, &v3);
 
     // Reassignment 1 succeeds
     s.client.reassign_verifier(&id, &v1);
@@ -129,7 +129,7 @@ fn reassign_verifier_rejects_campaign_beneficiary() {
     let id = s.campaign();
 
     // Register beneficiary as a verifier in the system
-    s.client.add_verifier(&s.beneficiary);
+    s.client.add_verifier(&s.admin, &s.beneficiary);
 
     // Admin attempts to reassign the campaign's verifier to the beneficiary
     let res = s.client.try_reassign_verifier(&id, &s.beneficiary);
@@ -137,7 +137,7 @@ fn reassign_verifier_rejects_campaign_beneficiary() {
 
     // Legitimate reassignment to a distinct registered verifier succeeds
     let new_v = Address::generate(&s.env);
-    s.client.add_verifier(&new_v);
+    s.client.add_verifier(&s.admin, &new_v);
     assert!(s.client.try_reassign_verifier(&id, &new_v).is_ok());
     assert_eq!(s.client.get_campaign(&id).verifier, new_v);
 }
@@ -146,8 +146,8 @@ fn reassign_verifier_rejects_campaign_beneficiary() {
 fn reassigning_to_the_beneficiary_or_creator_is_rejected() {
     let s = Setup::new();
     let id = s.campaign();
-    s.client.add_verifier(&s.beneficiary);
-    s.client.add_verifier(&s.creator);
+    s.client.add_verifier(&s.admin, &s.beneficiary);
+    s.client.add_verifier(&s.admin, &s.creator);
 
     assert_eq!(
         s.client.try_reassign_verifier(&id, &s.beneficiary),

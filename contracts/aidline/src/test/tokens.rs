@@ -438,11 +438,11 @@ fn test_view_is_verifier() {
     assert!(!s.client.is_verifier(&candidate));
 
     // Admin adds verifier
-    s.client.add_verifier(&candidate);
+    s.client.add_verifier(&s.admin, &candidate);
     assert!(s.client.is_verifier(&candidate));
 
     // Admin removes verifier
-    s.client.remove_verifier(&candidate);
+    s.client.remove_verifier(&s.admin, &candidate);
     assert!(!s.client.is_verifier(&candidate));
 }
 

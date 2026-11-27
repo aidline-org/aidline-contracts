@@ -108,7 +108,7 @@ fn emergency_fast_track_authorization() {
     let s = Setup::new();
     let id = s.campaign();
 
-    s.client.remove_verifier(&s.verifier);
+    s.client.remove_verifier(&s.admin, &s.verifier);
     assert_eq!(
         s.client.try_emergency_fast_track(&id),
         Err(Ok(Error::NotVerifier))

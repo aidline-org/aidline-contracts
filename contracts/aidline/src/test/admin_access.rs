@@ -15,17 +15,20 @@ fn old_admin_cannot_add_verifier_after_set_admin() {
         invoke: &MockAuthInvoke {
             contract: &s.client.address,
             fn_name: "add_verifier",
-            args: (candidate.clone(),).into_val(&s.env),
+            args: (old_admin.clone(), candidate.clone()).into_val(&s.env),
             sub_invokes: &[],
         },
     };
 
-    let res = s.client.mock_auths(&[auth]).try_add_verifier(&candidate);
-    assert_eq!(res.unwrap_err(), Err(InvokeError::Abort));
+    let res = s
+        .client
+        .mock_auths(&[auth])
+        .try_add_verifier(&old_admin, &candidate);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
     assert!(!s.client.is_verifier(&candidate));
 
     // New admin can add verifier
-    s.client.add_verifier(&candidate);
+    s.client.add_verifier(&new_admin, &candidate);
     assert!(s.client.is_verifier(&candidate));
 }
 
@@ -37,7 +40,7 @@ fn old_admin_cannot_remove_verifier_after_set_admin() {
     s.client.set_admin(&new_admin);
 
     let verifier = Address::generate(&s.env);
-    s.client.add_verifier(&verifier);
+    s.client.add_verifier(&new_admin, &verifier);
     assert!(s.client.is_verifier(&verifier));
 
     let auth = MockAuth {
@@ -45,22 +48,20 @@ fn old_admin_cannot_remove_verifier_after_set_admin() {
         invoke: &MockAuthInvoke {
             contract: &s.client.address,
             fn_name: "remove_verifier",
-            args: (verifier.clone(),).into_val(&s.env),
+            args: (old_admin.clone(), verifier.clone()).into_val(&s.env),
             sub_invokes: &[],
         },
     };
 
-    let expected_auth_err = soroban_sdk::Error::from_type_and_code(
-        soroban_sdk::xdr::ScErrorType::Context,
-        soroban_sdk::xdr::ScErrorCode::InvalidAction,
-    );
-    let res = s.client.mock_auths(&[auth]).try_remove_verifier(&verifier);
-    let err = res.unwrap_err().unwrap();
-    assert_eq!(err, expected_auth_err);
+    let res = s
+        .client
+        .mock_auths(&[auth])
+        .try_remove_verifier(&old_admin, &verifier);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
     assert!(s.client.is_verifier(&verifier));
 
     // New admin can remove verifier
-    s.client.remove_verifier(&verifier);
+    s.client.remove_verifier(&new_admin, &verifier);
     assert!(!s.client.is_verifier(&verifier));
 }
 
@@ -107,16 +108,11 @@ fn old_admin_cannot_set_bond_withdraw_delay_after_set_admin() {
         },
     };
 
-    let expected_auth_err = soroban_sdk::Error::from_type_and_code(
-        soroban_sdk::xdr::ScErrorType::Context,
-        soroban_sdk::xdr::ScErrorCode::InvalidAction,
-    );
     let res = s
         .client
         .mock_auths(&[auth])
         .try_set_bond_withdraw_delay(&86400);
-    let err = res.unwrap_err().unwrap();
-    assert_eq!(err, expected_auth_err);
+    assert_eq!(res.unwrap_err(), Err(InvokeError::Abort));
     assert_eq!(s.client.bond_withdraw_delay(), 0);
 
     // New admin can set bond withdraw delay
@@ -139,7 +135,7 @@ fn old_admin_cannot_slash_verifier_after_set_admin() {
         invoke: &MockAuthInvoke {
             contract: &s.client.address,
             fn_name: "slash_verifier",
-            args: (v.clone(), id, 150i128).into_val(&s.env),
+            args: (old_admin.clone(), v.clone(), id, 150i128).into_val(&s.env),
             sub_invokes: &[],
         },
     };
@@ -147,12 +143,12 @@ fn old_admin_cannot_slash_verifier_after_set_admin() {
     let res = s
         .client
         .mock_auths(&[auth])
-        .try_slash_verifier(&v, &id, &150);
-    assert_eq!(res.unwrap_err(), Err(InvokeError::Abort));
+        .try_slash_verifier(&old_admin, &v, &id, &150);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
     assert_eq!(s.client.get_verifier_bond(&v).unwrap().remaining, 400);
 
     // New admin can slash verifier
-    s.client.slash_verifier(&v, &id, &150);
+    s.client.slash_verifier(&new_admin, &v, &id, &150);
     assert_eq!(s.client.get_verifier_bond(&v).unwrap().remaining, 250);
     assert_eq!(s.client.slashed_recovery(&id), 150);
 }
@@ -166,7 +162,7 @@ fn old_admin_cannot_reassign_verifier_after_set_admin() {
 
     let id = s.campaign();
     let new_v = Address::generate(&s.env);
-    s.client.add_verifier(&new_v);
+    s.client.add_verifier(&new_admin, &new_v);
 
     let auth = MockAuth {
         address: &old_admin,

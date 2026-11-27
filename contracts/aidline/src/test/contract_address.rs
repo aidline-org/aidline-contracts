@@ -68,7 +68,7 @@ fn rejects_contract_address_as_verifier() {
 
     // Admin cannot register the contract itself as a verifier
     assert_eq!(
-        s.client.try_add_verifier(&contract_addr),
+        s.client.try_add_verifier(&s.admin, &contract_addr),
         Err(Ok(Error::Unauthorized))
     );
     assert!(!s.client.is_verifier(&contract_addr));

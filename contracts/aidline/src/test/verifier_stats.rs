@@ -53,7 +53,7 @@ fn a_reassigned_campaign_counts_for_the_verifier_who_held_it() {
     s.client.approve_milestone(&id, &s.proof());
 
     let second = Address::generate(&s.env);
-    s.client.add_verifier(&second);
+    s.client.add_verifier(&s.admin, &second);
     s.client.reassign_verifier(&id, &second);
 
     // The original verifier keeps what they did; the new one is assigned.
@@ -74,8 +74,8 @@ fn slashes_add_up_in_total_slashed() {
     let v = s.bonded_verifier(1_000, 400);
     let id = s.campaign();
 
-    s.client.slash_verifier(&v, &id, &150);
-    s.client.slash_verifier(&v, &id, &50);
+    s.client.slash_verifier(&s.admin, &v, &id, &150);
+    s.client.slash_verifier(&s.admin, &v, &id, &50);
     assert_eq!(s.client.verifier_stats(&v).total_slashed, 200);
     assert_eq!(s.client.verifier_stats(&s.verifier).total_slashed, 0);
 }
